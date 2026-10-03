@@ -1,4 +1,6 @@
 #!/usr/bin/env node
 "use strict";
 
-require("../scanner/main.js");
+const { main } = require("../main");
+
+process.exitCode = main(process.argv.slice(2));
