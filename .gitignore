@@ -1,0 +1,14 @@
+# Dependencies
+node_modules
+
+# Local env files
+.env.local
+
+# Build Outputs
+build
+dist
+
+
+bun.lock
+pnpm-lock.yaml
+yarn.lock
