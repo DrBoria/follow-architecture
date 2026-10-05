@@ -4,8 +4,11 @@
   "description": "ESLint rule + CLI that enforces the vertical-slice architecture: every slice has a .resource.ts CRUD binding, every .rm.ts imports and calls it, and nothing bypasses it.",
   "license": "MIT",
   "main": "config.js",
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
-    "md-code-follow-architecture": "bin/follow-architecture.js"
+    "follow-architecture": "bin/follow-architecture.js"
   },
   "files": [
     "config.js",
@@ -20,12 +23,11 @@
   "exports": {
     ".": "./config.js",
     "./config": "./config.js",
-    "./main": "./main.js"
-  },
-  "scripts": {
-    "test": "node --test"
+    "./main": "./main.js",
+    "./package.json": "./package.json"
   },
   "dependencies": {
+    "@typescript-eslint/parser": "^8.71.0",
     "remeda": "^2.50.0",
     "minimatch": "^9.0.4",
     "ts-morph": "^24.0.0"

@@ -62,7 +62,7 @@ const main = (argv) => {
 	const { parseArgs } = require("./config");
 	const args = parseArgs(argv);
 	if (args.help) {
-		console.log("usage: md-code-follow-architecture [--config <path>] [--ignore <glob>]... [--out <path>] [--check]");
+		console.log("usage: follow-architecture [--config <path>] [--ignore <glob>]... [--out <path>] [--check]");
 		return 0;
 	}
 	const repoRoot = path.resolve(args.cwd ?? process.cwd());
