@@ -1,7 +1,7 @@
 {
   "name": "@md-code/follow-architecture",
   "version": "0.1.0",
-  "description": "ESLint rule + CLI that enforces the vertical-slice architecture: every slice has a .resource.ts CRUD binding, every .rm.ts imports and calls it, and nothing bypasses it.",
+  "description": "ESLint rule + CLI that enforces a declarative architecture: where files may live, what they may be named, and what they may contain.",
   "license": "MIT",
   "main": "config.js",
   "engines": {
@@ -42,8 +42,6 @@
     "eslint",
     "eslint-rule",
     "architecture",
-    "vertical-slice",
-    "fhir",
     "typescript"
   ]
 }

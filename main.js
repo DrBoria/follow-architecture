@@ -24,6 +24,7 @@ const buildArchitecture = (raw) => {
 		aliases: normalizeAliases(raw.aliases ?? {}),
 		files: raw.files ?? ["**/*.ts", "**/*.tsx"],
 		ignores: raw.ignores ?? [],
+		ignoreDirs: raw.ignoreDirs ?? [],
 		exts: raw.exts ?? [".ts", ".tsx", ".js", ".jsx"],
 		raw,
 	};
@@ -70,7 +71,7 @@ const main = (argv) => {
 	const project = createTsProject();
 	const shouldCheck = matchers(arch);
 	const files = pipe(
-		collectFiles(repoRoot, { exts: arch.exts, ignoreDirs: ["node_modules", ".git", "dist", "build", "_medplum"], ignoreGlobs: [...(arch.ignores ?? []), ...(args.ignore ?? [])] }),
+		collectFiles(repoRoot, { exts: arch.exts, ignoreDirs: ["node_modules", ".git", "dist", "build", ...arch.ignoreDirs], ignoreGlobs: [...(arch.ignores ?? []), ...(args.ignore ?? [])] }),
 		map((abs) => ({ abs, rel: toRel(repoRoot, abs) })),
 		filter((f) => shouldCheck(f.rel)),
 	);

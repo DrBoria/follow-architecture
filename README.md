@@ -7,56 +7,73 @@ Two kinds of checks:
 - **nodes** — where files may live and what names they may have (a folder tree with closed/open lists and per-name reports).
 - **invariants** — per-file content rules: forbidden text, forbidden imports, and conditional checks driven by the file's AST.
 
+```mermaid
+flowchart LR
+    A["architecture.json"] --> N["Nodes<br/>where files may live"]
+    A --> I["Invariants<br/>what files may contain"]
+    F["Source files"] --> N
+    F --> I
+    N --> R["Report"]
+    I --> R
+```
+
+## Quick start
+
+```sh
+bun add -D @md-code/follow-architecture
+bunx follow-architecture --config architecture.json --out reports/follow-architecture.md
+```
+
 ## `architecture.json`
 
 ```jsonc
 {
-  "aliases": { "#_db": "core/ehr/_db" },
+  "aliases": { "#db": "src/db" },
   "nodes": [
     {
-      "slug": "slice",
-      "name": "{slice}.v",
-      "parent": "ehr",
+      "slug": "feature",
+      "name": "{feature}",
+      "parent": "features",
       "closed": true,
       "report": { "message": "…", "fix": "…" },
       "children": [
         "{kebab-case}.types.ts",
         "index.ts",
-        { "name": "{kebab-case}.resource.tsx", "forbidden": true, "report": { "message": "…", "fix": "…" } }
+        { "name": "{kebab-case}.store.tsx", "forbidden": true, "report": { "message": "…", "fix": "…" } }
       ]
     },
-    { "slug": "ehr", "name": "core/ehr", "children": ["slice", "db"] }
+    { "slug": "features", "name": "src/features", "children": ["feature", "db"] }
   ],
   "invariants": [
     {
-      "id": "rm-no-bypass",
-      "where": "core/ehr/{slice}.v/**/*.rm.ts",
+      "id": "service-no-bypass",
+      "where": "src/features/{feature}/**/*.service.ts",
       "forbid": [
-        { "key": "client", "pattern": "new AppMedplumClient", "report": { "message": "…", "fix": "…" }, "except": ["**/legacy/**"] },
+        { "key": "client", "pattern": "new HttpClient", "report": { "message": "…", "fix": "…" }, "except": ["**/legacy/**"] },
         { "type": "imports", "key": "no-vscode", "pattern": "vscode", "report": { "message": "…" } }
       ],
       "when": "(ctx) => { /* AST-level check, returns null | true | finding | finding[] */ }",
-      "except": ["core/ehr/catalog.v/**/*.rm.ts"],
+      "except": ["src/features/shared/**/*.service.ts"],
       "report": { "message": "…", "fix": "…" }
     }
   ]
 }
 ```
 
-Top-level options: `files` (globs scanned by the CLI, default `**/*.ts`, `**/*.tsx`), `exts` (default `.ts`, `.tsx`, `.js`, `.jsx`), `ignores` (file globs skipped by the CLI).
+Top-level options: `files` (globs scanned by the CLI, default `**/*.ts`, `**/*.tsx`), `exts` (default `.ts`, `.tsx`, `.js`, `.jsx`), `ignores` (file globs skipped by the CLI), `ignoreDirs` (folder names the CLI does not enter, added to `node_modules`, `.git`, `dist`, `build`).
 
 ## Nodes
 
 A **node** is a folder (or folder prefix) in the tree. Nodes reference each other by `slug` to form the tree; the path of a node is its `parent`'s path + its `name`.
 
 - `slug` — unique name, used as `parent` by children and as `node` by invariants.
-- `name` — the path segment (relative to the parent). `{name}` placeholders capture path segments (e.g. `{slice}` in `{slice}.v` captures `allergies`). Captures are available in reports of every finding inside the node.
+- `name` — the path segment (relative to the parent). `{name}` placeholders capture path segments (e.g. `{feature}` in a `where` of `src/features/{feature}/**` captures `orders`). Captures are available in reports of every finding inside the node.
 - `parent` (optional) — the `slug` of the containing node. A node without `parent` is a root.
 - `closed` (optional, default `false`) — when `true`, a file directly inside the node must match one of its `children`; otherwise it gets the node's `report`. A folder (a child that is a folder) that is not in the list is also a violation.
 - `report` (optional) — the finding for "file does not belong here" (closed nodes) — see [report](#report).
 - `children` (optional) — the list of allowed names inside the node. Each entry is either:
   - a **string** — a name template (`{kebab-case}`, `*`, `?` work; a name without an extension is a folder, with an extension is a file);
-  - an **object** — `{ name, forbidden?, report?, description? }`. `forbidden: true` names a shape that must **never** exist (e.g. `{kebab-case}.resource.tsx` in a sub-feature folder) and reports `report` when it does.
+  - an **object** — `{ name, forbidden?, report?, description? }`. `forbidden: true` names a shape that must **never** exist (e.g. `{kebab-case}.store.tsx` in a sub-feature folder) and reports `report` when it does.
 
 A node with no `children` is **open** — anything inside is fine. The deepest matching node wins: a file is checked against the most specific node whose path prefix matches.
 
@@ -91,8 +108,7 @@ An **invariant** is a per-file rule. Fields:
 | `ctx.path` | repo-relative path (posix) |
 | `ctx.basename` | file name |
 | `ctx.dir` | directory (repo-relative) |
-| `ctx.slice` | the `{slice}` capture if the path matches `…/<slice>.v/…`, else `null` |
-| `ctx.captures` | all `{name}` captures from the invariant's `where` and the matched node |
+| `ctx.captures` | all `{name}` captures from the invariant's `where` and the matched node, e.g. `ctx.captures.feature` |
 | `ctx.imports` | the file's import declarations: `{ source, named, defaultName, namespaceName, typeOnly, resolved }` — `resolved` is the repo-relative path after alias expansion, `null` for external modules |
 | `ctx.siblings` | basenames of the other files in the same folder (the folder listing the CLI walked) — for rules like "at most N files per folder" or "no duplicated basename prefixes" |
 | `ctx.arch` | the loaded architecture (nodes, invariants, aliases) |
@@ -116,7 +132,7 @@ An **invariant** is a per-file rule. Fields:
 | `{basename}` | file name without directory |
 | `{dir}` | directory of the file (repo-relative) |
 
-**Captures** — any `{name}` used in a node `name`, invariant `where`, or `forbid` (imports) pattern. E.g. `{slice}` in `core/ehr/{slice}.v/**/*.rm.ts` captures `allergies` and is available as `{slice}` in that file's findings.
+**Captures** — any `{name}` used in a node `name`, invariant `where`, or `forbid` (imports) pattern. E.g. `{feature}` in `src/features/{feature}/**/*.service.ts` captures `orders` and is available as `{feature}` in that file's findings.
 
 **Match context** (text-forbid findings only):
 
@@ -134,13 +150,15 @@ Without `report`, the tool composes a fallback from the rule's shape.
 
 ## Aliases
 
-`aliases` maps import specifiers to paths for import resolution (e.g. `"#_db": "core/ehr/_db"`). Used by `type: "imports"` forbid entries and by `ctx.imports[].resolved`.
+`aliases` maps import specifiers to paths for import resolution (e.g. `"#db": "src/db"`). Used by `type: "imports"` forbid entries and by `ctx.imports[].resolved`.
 
 ## CLI
 
 ```sh
-node follow-architecture/bin/follow-architecture.js [options]
+bunx follow-architecture [options]
 ```
+
+Without installing: `bunx @md-code/follow-architecture [options]`.
 
 | flag | default | meaning |
 | --- | --- | --- |
@@ -158,10 +176,10 @@ The package exports a `flatConfig` factory:
 
 ```js
 // eslint.config.js
-const { flatConfig } = require("./follow-architecture/config.js");
+const { flatConfig } = require("@md-code/follow-architecture");
 
 module.exports = flatConfig(require("./architecture.json"), {
-  files: ["core/ehr/**/*.ts", "core/ehr/**/*.tsx"],
+  files: ["src/**/*.ts", "src/**/*.tsx"],
 });
 ```
 
