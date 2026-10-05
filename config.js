@@ -5,6 +5,7 @@ const path = require("node:path");
 const { buildArchitecture } = require("./main");
 const { checkFile } = require("./utils");
 const { createTsProject } = require("./ast");
+const pkg = require("./package.json");
 
 const findRepoRoot = (from) => {
 	let dir = from;
@@ -20,9 +21,8 @@ const findRepoRoot = (from) => {
 
 const rule = {
 	meta: {
-		name: "md-code/follow-architecture",
-		doc: "Enforces the vertical-slice architecture defined in architecture.json",
 		type: "problem",
+		docs: { description: "Enforces the vertical-slice architecture defined in architecture.json" },
 		schema: [{ type: "object" }],
 	},
 	create(context) {
@@ -42,12 +42,12 @@ const rule = {
 };
 
 const plugin = {
-	meta: { name: "eslint-plugin-md-code", version: "0.1.0" },
+	meta: { name: pkg.name, version: pkg.version },
 	rules: { "follow-architecture": rule },
 };
 
 const flatConfig = (architecture, opts = {}) => {
-	const { parser, files, ignores } = opts;
+	const { parser, files, ignores, plugins } = opts;
 	const list = [];
 	if (ignores?.length) list.push({ ignores });
 	list.push({
@@ -57,7 +57,7 @@ const flatConfig = (architecture, opts = {}) => {
 			parserOptions: { ecmaVersion: "latest", sourceType: "module" },
 		},
 		linterOptions: { reportUnusedDisableDirectives: "off" },
-		plugins: { "md-code": plugin },
+		plugins: plugins ?? { "md-code": plugin },
 		rules: { "md-code/follow-architecture": ["error", architecture.raw ?? architecture] },
 	});
 	return list;
@@ -79,4 +79,4 @@ const parseArgs = (argv) => {
 	return args;
 };
 
-module.exports = { flatConfig, parseArgs };
+module.exports = { flatConfig, parseArgs, plugin };
