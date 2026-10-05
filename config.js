@@ -2,7 +2,8 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { buildArchitecture } = require("./main");
+const { minimatch } = require("minimatch");
+const { loadArchitecture } = require("./main");
 const { checkFile } = require("./utils");
 const { createTsProject } = require("./ast");
 const pkg = require("./package.json");
@@ -14,7 +15,7 @@ const findRepoRoot = (from) => {
 			if (fs.existsSync(path.join(dir, name))) return dir;
 		}
 		const parent = path.dirname(dir);
-		if (parent === dir) return from;
+		if (parent === dir) return process.cwd();
 		dir = parent;
 	}
 };
@@ -23,12 +24,30 @@ const rule = {
 	meta: {
 		type: "problem",
 		docs: { description: "Enforces the vertical-slice architecture defined in architecture.json" },
-		schema: [{ type: "object" }],
+		schema: [
+			{
+				type: "object",
+				properties: {
+					config: { type: "string" },
+					include: { type: "array" },
+					ignoreDirs: { type: "array" },
+					ignores: { type: "array" },
+				},
+				additionalProperties: false,
+			},
+		],
 	},
 	create(context) {
-		const arch = buildArchitecture(context.options[0] ?? {});
+		const opts = context.options[0] ?? {};
 		const filePath = context.filename ?? context.getFilename();
 		const repoRoot = findRepoRoot(path.dirname(filePath));
+		const rel = path.relative(repoRoot, filePath).split(path.sep).join("/");
+		const arch = loadArchitecture(opts.config ?? path.join(repoRoot, "architecture.json"));
+		const ignoreDirs = [...new Set(["node_modules", ".git", "dist", "build", ...(arch.ignoreDirs ?? []), ...(opts.ignoreDirs ?? [])])];
+		const ignoreGlobs = [...(arch.ignores ?? []), ...(opts.ignores ?? [])];
+		if (ignoreDirs.some((d) => rel === d || rel.startsWith(`${d}/`))) return {};
+		if (ignoreGlobs.some((g) => minimatch(rel, g))) return {};
+		if (opts.include?.length && !opts.include.some((g) => minimatch(rel, g))) return {};
 		const project = createTsProject();
 		const findings = checkFile(filePath, fs.readFileSync(filePath, "utf8"), repoRoot, arch, project);
 		for (const f of findings) {

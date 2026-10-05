@@ -1,9 +1,9 @@
 {
   "name": "@md-code/follow-architecture",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "ESLint rule + CLI that enforces a declarative architecture: where files may live, what they may be named, and what they may contain.",
   "license": "MIT",
-  "main": "config.js",
+  "main": "plugin.js",
   "engines": {
     "node": ">=18"
   },
@@ -11,6 +11,7 @@
     "follow-architecture": "bin/follow-architecture.js"
   },
   "files": [
+    "plugin.js",
     "config.js",
     "main.js",
     "utils.js",
@@ -21,7 +22,8 @@
     "README.md"
   ],
   "exports": {
-    ".": "./config.js",
+    ".": "./plugin.js",
+    "./plugin": "./plugin.js",
     "./config": "./config.js",
     "./main": "./main.js",
     "./package.json": "./package.json"

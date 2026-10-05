@@ -176,11 +176,21 @@ The package exports a `flatConfig` factory:
 
 ```js
 // eslint.config.js
-const { flatConfig } = require("@md-code/follow-architecture");
+const plugin = require("@md-code/follow-architecture");
 
-module.exports = flatConfig(require("./architecture.json"), {
-  files: ["src/**/*.ts", "src/**/*.tsx"],
-});
+module.exports = [
+  {
+    files: ["src/**/*.ts", "src/**/*.tsx"],
+    plugins: { "md-code": plugin },
+    rules: {
+      "md-code/follow-architecture": ["error", {
+        config: "architecture.json",
+      }],
+    },
+  },
+];
 ```
 
-`flatConfig(architecture, { parser, files, ignores })` returns a flat-config array. `architecture` is the object (or `{ file: "architecture.json" }` — it is resolved lazily per file so the repo root is found from the file being linted). `parser` defaults to `@typescript-eslint/parser`. The rule is `md-code/follow-architecture`.
+The package's main export is the ESLint plugin (`{ meta, rules }`). The rule is `md-code/follow-architecture`; pass the architecture file via the `config` option (repo-root-relative, or absolute).
+
+`require("@md-code/follow-architecture/config").flatConfig(architecture, { parser, files, ignores, plugins })` is also exported as a flat-config factory. `architecture` is the object (or `{ file: "architecture.json" }` — it is resolved lazily per file so the repo root is found from the file being linted). `parser` defaults to `@typescript-eslint/parser`.
