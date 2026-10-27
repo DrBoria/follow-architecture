@@ -14,10 +14,15 @@
     "plugin.js",
     "config.js",
     "main.js",
-    "utils.js",
-    "report.js",
+    "aliases.js",
+    "args.js",
     "ast.js",
-    "entities",
+    "pipeline.js",
+    "invariants",
+    "nodes",
+    "code-roles",
+    "utils",
+    "report",
     "bin",
     "README.md"
   ],
@@ -32,10 +37,17 @@
     "@typescript-eslint/parser": "^8.71.0",
     "remeda": "^2.50.0",
     "minimatch": "^9.0.4",
-    "ts-morph": "^24.0.0"
+    "ts-morph": "^24.0.0",
+    "js-yaml": "^5.4.2"
   },
   "peerDependencies": {
     "eslint": ">=8.40.0"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.3"
   },
   "publishConfig": {
     "access": "public"
