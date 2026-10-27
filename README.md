@@ -1,196 +1,187 @@
 # follow-architecture
 
-ESLint rule + CLI that validates code against a declarative architecture skeleton. The tool knows nothing about your project — everything (paths, names, rules, fixes) lives in `architecture.json`.
+ESLint rule + CLI that validates code against a declarative architecture. The plugin knows nothing about your project — everything (paths, names, rules, fixes) lives in `architecture.yaml`.
 
-Two kinds of checks:
+The plugin is 100% generic. It collects **raw facts** from the AST via ts-morph and evaluates **filters** (Keystone-GraphQL-filters style) against them. There are no named rule kinds and no semantic predicates inside the plugin — all rule semantics live in the YAML.
 
-- **nodes** — where files may live and what names they may have (a folder tree with closed/open lists and per-name reports).
-- **invariants** — per-file content rules: forbidden text, forbidden imports, and conditional checks driven by the file's AST.
+Four entities, each with its own section (and folder in this repo) — they do not mix:
+
+| entity | YAML key | folder | answers |
+| --- | --- | --- | --- |
+| aliases | `aliases` | [aliases.js](aliases.js) | which import sources map to which paths |
+| nodes | `nodes` | [nodes/](nodes) | where files may live and what names they may have |
+| codeRoles | `codeRoles` | [code-roles/](code-roles) | what a declaration *is* (store model, factory, pure function, …) |
+| invariants | `invariants` | [invariants/](invariants) | what a file may contain |
 
 ```mermaid
 flowchart LR
-    A["architecture.json"] --> N["Nodes<br/>where files may live"]
-    A --> I["Invariants<br/>what files may contain"]
-    F["Source files"] --> N
+    Y["architecture.yaml"] --> N["nodes<br/>where files may live"]
+    Y --> R["codeRoles<br/>what declarations are"]
+    Y --> I["invariants<br/>what files may contain"]
+    F["Source files (ts-morph facts)"] --> N
+    F --> R
     F --> I
-    N --> R["Report"]
-    I --> R
+    N --> O["Report"]
+    R --> O
+    I --> O
 ```
 
 ## Quick start
 
 ```sh
-bun add -D @md-code/follow-architecture
-bunx follow-architecture --config architecture.json --out reports/follow-architecture.md
+bunx follow-architecture --config architecture.yaml --out reports/follow-architecture.md
+# exit 1 when findings exist (CI):
+bunx follow-architecture --config architecture.yaml --check
 ```
 
-## `architecture.json`
+As an ESLint rule (flat config):
 
-```jsonc
-{
-  "aliases": { "#db": "src/db" },
-  "nodes": [
-    {
-      "slug": "feature",
-      "name": "{feature}",
-      "parent": "features",
-      "closed": true,
-      "report": { "message": "…", "fix": "…" },
-      "children": [
-        "{kebab-case}.types.ts",
-        "index.ts",
-        { "name": "{kebab-case}.store.tsx", "forbidden": true, "report": { "message": "…", "fix": "…" } }
-      ]
-    },
-    { "slug": "features", "name": "src/features", "children": ["feature", "db"] }
-  ],
-  "invariants": [
-    {
-      "id": "service-no-bypass",
-      "where": "src/features/{feature}/**/*.service.ts",
-      "forbid": [
-        { "key": "client", "pattern": "new HttpClient", "report": { "message": "…", "fix": "…" }, "except": ["**/legacy/**"] },
-        { "type": "imports", "key": "no-vscode", "pattern": "vscode", "report": { "message": "…" } }
-      ],
-      "when": "(ctx) => { /* AST-level check, returns null | true | finding | finding[] */ }",
-      "except": ["src/features/shared/**/*.service.ts"],
-      "report": { "message": "…", "fix": "…" }
-    }
-  ]
-}
+```js
+const { flatConfig } = require("@md-code/follow-architecture");
+module.exports = [...flatConfig(require("./architecture.yaml"))];
 ```
 
-Top-level options: `files` (globs scanned by the CLI, default `**/*.ts`, `**/*.tsx`), `exts` (default `.ts`, `.tsx`, `.js`, `.jsx`), `ignores` (file globs skipped by the CLI), `ignoreDirs` (folder names the CLI does not enter, added to `node_modules`, `.git`, `dist`, `build`).
+## `architecture.yaml`
+
+```yamlc
+# import-source → repo-relative path (for resolving imports in facts)
+aliases:
+  backend: apps/backend
+
+# folder tree: where files may live
+nodes:
+  - slug: backend          # unique id, referenced by parent / children
+    name: apps/backend     # path segment (or prefix); {name} placeholders capture segments
+    parent: root
+    closed: true           # a file directly inside must match one of children
+    report:                # finding text for "file does not belong here"
+      message: "…"
+      fix: "…"
+    children:
+      - index.ts
+      - "{kebab-case}.ts"  # name template; {kebab-case} matches kebab-case text
+      - name: "{kebab-case}"
+        forbidden: true    # a shape that must NEVER exist
+        report: { message: "…", fix: "…" }
+
+# what a declaration is: a LIST of roles, first `infer` filter that matches wins
+codeRoles:
+  - slug: storeModel
+    name: store model
+    # Accessors that REACH this role (mobx-state-tree's getRoot/getParent).
+    # Property-access chains rooted at one become the `scopeAccesses` fact.
+    # Per-role: different roles may be reached through different accessors.
+    scopeAccessors:
+      - getRoot
+      - getParent
+    infer:
+      - kind: { equals: VariableDeclaration }
+      - initializer:
+          kind: { in: [CallExpression, NewExpression] }
+          origin: { equals: "t.model" }
+    assert:
+      structure:
+        forbidden:
+          - kind: { equals: ClassDeclaration }
+      actions:
+        CallExpression:
+          allow:
+            pureFunction: { max: 50 }   # per-role call-count bounds
+
+# what a file may contain
+invariants:
+  - id: no-any
+    where: ["**/*.ts"]          # minimatch globs; empty/omitted = all files
+    except: ["**/*.test.ts"]    # globs the invariant does not apply to
+    when:                              # optional gate: a plain filter over the file facts
+      roles: { some: { equals: orchestrator } }  # e.g. "a role is present"
+    forbid:                     # a finding when a filter MATCHES the facts
+      - descendants:
+          some:
+            kind: { equals: AnyKeyword }
+    must:                       # a finding when a filter DOES NOT match
+      - path.folderFiles:
+          contains: store.ts
+    report: { message: "…", fix: "…" }
+```
+
+The yaml describes **what the code must look like** — it carries no scan scope. Where the tool looks is a tool concern, set separately:
+
+- **CLI** — `--files <glob>` (files to scan; default `**/*.ts`, `**/*.tsx`), `--ignore <glob>` (repeatable, file globs skipped).
+- **ESLint rule options** — `{ config, ignoreDirs?, ignores? }`: `ignoreDirs` (folder names not entered, added to the built-in `node_modules`, `.git`, `.vscode-test`, `out`, `dist`, `build`, `coverage`) and `ignores` (file globs skipped).
+- File extensions are fixed: `.ts`, `.tsx`, `.js`, `.jsx`.
 
 ## Nodes
 
-A **node** is a folder (or folder prefix) in the tree. Nodes reference each other by `slug` to form the tree; the path of a node is its `parent`'s path + its `name`.
+A **node** is a folder (or folder prefix) in the tree. Nodes reference each other by `slug`; the path of a node is its `parent`'s path + its `name`.
 
-- `slug` — unique name, used as `parent` by children and as `node` by invariants.
-- `name` — the path segment (relative to the parent). `{name}` placeholders capture path segments (e.g. `{feature}` in a `where` of `src/features/{feature}/**` captures `orders`). Captures are available in reports of every finding inside the node.
-- `parent` (optional) — the `slug` of the containing node. A node without `parent` is a root.
-- `closed` (optional, default `false`) — when `true`, a file directly inside the node must match one of its `children`; otherwise it gets the node's `report`. A folder (a child that is a folder) that is not in the list is also a violation.
-- `report` (optional) — the finding for "file does not belong here" (closed nodes) — see [report](#report).
-- `children` (optional) — the list of allowed names inside the node. Each entry is either:
+- `slug` — unique name, used as `parent` by children.
+- `name` — the path segment. `{name}` placeholders capture path segments (e.g. `{kebab-case}` in `apps/backend/features/{kebab-case}`) and are available in reports.
+- `parent` (optional) — the `slug` of the containing node. No `parent` = root.
+- `closed` (optional, default `false`) — when `true`, a file directly inside must match one of its `children`; otherwise it gets the node's `report`.
+- `report` (optional) — the finding for "file does not belong here".
+- `children` (optional) — allowed names inside the node. Each entry is either:
   - a **string** — a name template (`{kebab-case}`, `*`, `?` work; a name without an extension is a folder, with an extension is a file);
-  - an **object** — `{ name, forbidden?, report?, description? }`. `forbidden: true` names a shape that must **never** exist (e.g. `{kebab-case}.store.tsx` in a sub-feature folder) and reports `report` when it does.
+  - an **object** — `{ name, forbidden?, report? }`. `forbidden: true` names a shape that must **never** exist.
 
-A node with no `children` is **open** — anything inside is fine. The deepest matching node wins: a file is checked against the most specific node whose path prefix matches.
+A node with no `children` is **open** — anything inside is fine. The deepest matching node wins.
+
+Nodes may also carry a `roles` block: `required: [role, …]` (the file must contain a candidate of each role) and `forbidden: [role, …]` (the file must not contain a candidate of that role).
+
+## Code roles
+
+A **candidate** is any function-like node (declaration, expression, arrow, method, accessor) or variable declaration. For each candidate the plugin collects raw facts (below) and assigns the **first** role (in YAML declaration order) whose `infer` filter matches.
+
+- `infer` — an AND-list of filters on the candidate's facts. A role without `infer` is never inferred (it can still be referenced by `when` gates and `assert`).
+- `assert` (optional) — checked for every candidate that got this role:
+  - `structure.forbidden` / `structure.required` — filters on the candidate's `descendants`;
+  - `actions.<DescendantKind>` — `{ deny?, allow?, unresolved? }` on the candidate's calls: `deny: all` forbids the kind entirely, `allow: true` allows it, `allow: { <role>: { min?, max? } }` bounds how many calls may target candidates of that role.
 
 ## Invariants
 
 An **invariant** is a per-file rule. Fields:
 
 - `id` — unique name.
-- `node` (optional) — a node `slug`; the invariant only runs for files that captured that node. Default `*` (all files).
-- `where` (optional) — a glob the file path must match; `{name}` captures work and are available in reports. No `where` = all files.
-- `except` (optional) — file globs the invariant does not apply to.
-- `report` (optional) — a finding emitted for **every** matching file (a "this file, as it exists, is a problem" rule).
-- `when` (optional) — a gate or an AST-level check, called as `when(ctx)` with the full file context (see [ctx](#ctx)). Return values:
-  - `null` / `false` — the invariant (and its `forbid` list) is off for this file;
-  - `true` — on;
-  - an object or array of objects — emitted as finding(s) and the `forbid` list is skipped.
-- `forbid` (optional) — array of entries, each with a `type`:
-  - `type: "fileContent"` (default) — `{ key?, pattern, except?, report? }`. `pattern` is a **regex** tested against every line of the file; every matching line is a finding. `except` is a list of file globs where this entry does not apply.
-  - `type: "imports"` — `{ key?, pattern, except?, report? }`. `pattern` is a **glob** (with `{name}` captures) tested against each import's **resolved path** — or the raw source for external modules that cannot be resolved. Every matching import is a finding.
-  - `type: "syntax"` — `{ key?, kind, pattern?, except?, report? }`. `kind` is a ts-morph node kind name (e.g. `ImportDeclaration`, `FunctionDeclaration`, `VariableStatement`); every AST node of that kind is a finding, optionally narrowed by `pattern` (a regex tested against the node's full text). Use it when a line-based regex cannot express the rule (e.g. "no `export default`", "no function declarations").
-- `children` (optional) — nested invariants; they run after the parent and inherit its captures.
+- `where` (optional) — list of glob patterns the file path must match (same placeholders as node children: `{kebab-case}`, `{camelCase}`, `{PascalCase}`, `{name}` → `[^/]+`). Empty/omitted = all files.
+- `except` (optional) — list of globs the invariant does not apply to.
+- `when` (optional) — a gate: a plain filter over the file facts (the same filter language as `forbid`/`must`, run through the shared `matches` engine). The file facts include `roles` (the flat list of role names present) and `candidates` (the role-enriched candidate facts, each carrying `role`, `parentRole`, and `calls[].targetRole`). Example: `when: { roles: { some: { equals: orchestrator } } }` gates on "an orchestrator is present"; `when: { candidates: { some: { role: { equals: pureFunction }, parentRole: { equals: orchestrator } } } }` gates on "a pure function nested in an orchestrator". Omitted = no gate.
+- `forbid` (optional) — list of filters; a finding when a filter **matches** the file facts. A filter whose keys are not file-level facts is applied to each **candidate** instead, and the matching candidate supplies the `{what}` / line of the finding.
+- `must` (optional) — list of filters; a finding when a filter does **not** match.
+- `assert` (optional) — a single filter; a finding when it does not match.
+- `report` (optional) — the finding text. An invariant with a `report` and no checks of its own is its own finding (it applies to every matching file).
 
-`key` (on the invariant or a `forbid` entry) is a stable dedup key: findings with the same `key` are collapsed to one per file.
+## The filter engine
 
-### `ctx`
+Every `infer` / `forbid` / `must` / `assert` / `where`-by filter uses one grammar ([utils/queries.js](utils/queries.js)). A filter is:
 
-`when(ctx)` receives, per file:
+- an **object of entries** — AND of all entries;
+- a **list of filters** — AND of all sub-filters;
+- `null` / omitted — always passes.
 
-| field | meaning |
-| --- | --- |
-| `ctx.file` | the full ts-morph `SourceFile` — the whole AST is available (`getImportDeclarations`, `getFunctions`, `getDescendantsOfKind`, …) |
-| `ctx.path` | repo-relative path (posix) |
-| `ctx.basename` | file name |
-| `ctx.dir` | directory (repo-relative) |
-| `ctx.captures` | all `{name}` captures from the invariant's `where` and the matched node, e.g. `ctx.captures.feature` |
-| `ctx.imports` | the file's import declarations: `{ source, named, defaultName, namespaceName, typeOnly, resolved }` — `resolved` is the repo-relative path after alias expansion, `null` for external modules |
-| `ctx.siblings` | basenames of the other files in the same folder (the folder listing the CLI walked) — for rules like "at most N files per folder" or "no duplicated basename prefixes" |
-| `ctx.arch` | the loaded architecture (nodes, invariants, aliases) |
-| `ctx.enclosingFunctionName(line)` | name of the function containing the 1-based `line`, or `null` |
+Each entry is either an **operator** or a **field** of the item (`{ kind: { in: […] } }` → item's `kind` must pass `{ in: […] }`).
 
-`when` may be a function (in a `.js` config) or a string — either a full function body (`"(ctx) => …"` / `"function(ctx) { … }"`) or an expression evaluated with `ctx` in scope — so it can live in JSON.
+Scalar operators: `equals`, `not`, `lt`, `lte`, `gt`, `gte`, `in`, `notIn`, `contains`, `startsWith`, `endsWith`, `isSet`, `setEquals`, `globMatches`.
 
-## report
+List operators (list values only; a missing/non-list field simply fails the filter): `length`, `every`, `some`, `none`, `where` (`{ filter, by }` — narrows the list, then applies `by`).
 
-`report` is a **field**, not a check. It is `null`, a string, a function `(vars) => string`, or `{ message, fix, level? }`. `message` is the finding text as the reader sees it; `fix` is the "instead do this" part. Both support multiline Markdown (fenced code blocks, lists, bold). The report prints them verbatim; the ESLint message is a single-line variant of `message`.
+Composition: `or` — a list of filters; passes when **any** sub-filter passes.
 
-### Variables
+`$`-prefixed values reference another fact in scope: `{ equals: "$parentName" }` compares the field to the candidate's `parentName`.
 
-`{name}` placeholders are substituted before the text is printed.
+## Facts
 
-**From the file path** (every finding):
+**File facts** (the target of file-level invariant filters): `lines`, `imports` (`[{source, typeOnly, named, line, defaultName?, namespaceName?, resolved}]` — `named` carries local binding names, `resolved` is the repo-relative path after alias expansion), `exports`, `path` (everything about the file's LOCATION in the repo tree, queryable by dot-path: `path.dir`, `path.fileName`, `path.filesPerFolder`, `path.folderFiles`, `path.subfolders`, `path.sharedPrefixes`), `scopeAccesses` (property-access chains rooted in a config-named accessor, e.g. `getRoot(...)`), `descendants` (every meaningful node at every depth: `{kind, line, name, snippet, depth, …}` plus `isUnknownCast` on `as` expressions and `members` on object literals), `candidates` (the function-like / variable-declaration facts, each role-enriched), `roles` (the flat list of role names present).
 
-| variable | meaning |
-| --- | --- |
-| `{file}` | repo-relative path of the flagged file |
-| `{basename}` | file name without directory |
-| `{dir}` | directory of the file (repo-relative) |
+**Candidate facts** (one entry per function-like / variable declaration): `kind`, `name`, `line`, `role`, `parentName`, `moduleScope`, `exported`, `mutable`, `lines`, `descendants`, `returns` (`[{kind, exprKind, origin, members}]` — `kind` is `ReturnStatement`/`ExpressionBody`, `exprKind` is the ts-morph kind of the yielded expression or null, `origin` is the leftmost identifier of the chain (`t.model` in `t.model({...})`), `members` is raw `[{name, kind, isFunction}]` for an object-literal value), `hasReturn`, `initializer` (same `{kind, exprKind, origin, members}` shape — null for non-variable declarations), `calls` (one unified entity for every call shape: `{kind, origin, action, module, forwardsAllParams, targetRole}`), `assignments` (`[{kind, targetName, local}]`), `declarations`, `parameters`, `mutatedParams`, `emptyBody`, `bodyStatements`.
 
-**Captures** — any `{name}` used in a node `name`, invariant `where`, or `forbid` (imports) pattern. E.g. `{feature}` in `src/features/{feature}/**/*.service.ts` captures `orders` and is available as `{feature}` in that file's findings.
+`nested` is set on function-like / loop descendants: `true` when nested inside another function-like node.
 
-**Match context** (text-forbid findings only):
+## Report
 
-| variable | meaning |
-| --- | --- |
-| `{count}` | how many lines matched the pattern |
-| `{plural}` | `""` if count is 1, `"s"` otherwise — for `time{plural}` |
-| `{line}` | first matching line number |
-| `{lines}` | all matching line numbers, comma-separated |
-| `{snippet}` | the first matching line, trimmed |
-| `{match}` | the exact matched text on the first line |
-| `{where}` | ` in `functionName`` if the match is inside a named function, empty otherwise |
+`report` is `null`, a string, or `{ message, fix }`. Both fields support multiline Markdown. `{name}` placeholders are substituted: path vars (`{file}`, `{basename}`, `{dir}`), captures from `where` / node names, and match context (`{what}` — the matched candidate's name, `{snippet}`, `{lines}`, `{filesPerFolder}`, …).
 
-Without `report`, the tool composes a fallback from the rule's shape.
-
-## Aliases
-
-`aliases` maps import specifiers to paths for import resolution (e.g. `"#db": "src/db"`). Used by `type: "imports"` forbid entries and by `ctx.imports[].resolved`.
-
-## CLI
+## Tests
 
 ```sh
-bunx follow-architecture [options]
+npx vitest run
 ```
-
-Without installing: `bunx @md-code/follow-architecture [options]`.
-
-| flag | default | meaning |
-| --- | --- | --- |
-| `[cwd]` | `.` | repo root (positional) |
-| `--config <path>` | `architecture.json` / `architecture.config.js` found by walking up | architecture JSON or JS module |
-| `--out <path>` | print to stdout | report output |
-| `--ignore <glob>` | — | extra file globs to skip (repeatable) |
-| `--check` | off | exit 1 if there are findings |
-
-The report (`--out`) groups findings by file and prints each finding as the full `message` followed by a **Fix.** section with the `fix` text.
-
-## ESLint
-
-The package exports a `flatConfig` factory:
-
-```js
-// eslint.config.js
-const plugin = require("@md-code/follow-architecture");
-
-module.exports = [
-  {
-    files: ["src/**/*.ts", "src/**/*.tsx"],
-    plugins: { "md-code": plugin },
-    rules: {
-      "md-code/follow-architecture": ["error", {
-        config: "architecture.json",
-      }],
-    },
-  },
-];
-```
-
-The package's main export is the ESLint plugin (`{ meta, rules }`). The rule is `md-code/follow-architecture`; pass the architecture file via the `config` option (repo-root-relative, or absolute).
-
-`require("@md-code/follow-architecture/config").flatConfig(architecture, { parser, files, ignores, plugins })` is also exported as a flat-config factory. `architecture` is the object (or `{ file: "architecture.json" }` — it is resolved lazily per file so the repo root is found from the file being linted). `parser` defaults to `@typescript-eslint/parser`.
