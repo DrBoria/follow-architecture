@@ -3,8 +3,8 @@ const require = createRequire(import.meta.url);
 
 
 import { describe, it, expect } from "vitest";
-const { findingFrom } = require("../../report/report");
-const { renderReport } = require("../../report/user-report");
+const { findingFrom } = require("../../report/cli-report");
+const { renderReport } = require("../../report/cli-report");
 
 describe("renderReport", () => {
 	it("renders a header with the repo root", () => {

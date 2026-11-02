@@ -17,16 +17,17 @@ const ARCH = JSON.stringify({
 		{ slug: "feature", name: "{kebab-case}", parent: "src", children: ["actions", "**/*.ts"] },
 		{
 			slug: "actions",
+			role: "probe",
 			name: "actions",
 			parent: "feature",
 			children: ["**/*.ts"],
-			location: { declaration: ["probe"] },
 		},
 	],
 	codeRoles: [
 		{
 			slug: "probe",
-			infer: [{ kind: { equals: "ArrowFunction" } }],
+			infer: [{ kind: { own: { is: { equals: "ArrowFunction" } } } }],
+			actions: { declare: { where: ["**/*.ts"] }, export: { where: ["**/*.ts"] } },
 		},
 	],
 	invariants: [],
@@ -78,22 +79,24 @@ describe("role home check", () => {
 	it("flags a role candidate sitting in a feature folder but outside its home subfolder", () => {
 		const { printed, code } = run(["--config", path.join(root, "architecture.json"), "--check", "--files", "src/alpha/store.ts"]);
 		expect(code).toBe(1);
-		// the concrete resolved home folder is in the message
-		expect(printed).toContain("belong in `src/alpha/actions`");
-		// the candidate is named
-		expect(printed).toContain("A `probe` (go)");
+		// the concrete resolved home is in the message, and so is the candidate
+		expect(printed).toContain("belongs in `src/alpha/actions`");
+		expect(printed).toContain("`go`");
 	});
 
 	it("does not flag a role candidate inside its home folder", () => {
 		const { printed, code } = run(["--config", path.join(root, "architecture.json"), "--check", "--files", "src/alpha/actions/go.ts"]);
 		expect(code).toBe(0);
-		expect(printed).not.toContain("belong in");
 	});
 
 	it("does not flag a file that is not inside any feature folder instance", () => {
 		const { printed, code } = run(["--config", path.join(root, "architecture.json"), "--check", "--files", "src/beta/model.ts"]);
-		expect(code).toBe(0);
+		// `n` IS a declaration, and declaring is a relation — the architecture says
+		// nothing about it, so it is reported as such. What this test guards is that
+		// it is never called a misplaced `probe`.
+		expect(code).toBe(1);
 		expect(printed).not.toContain("belong in");
+		expect(printed).toContain("has no role");
 	});
 });
 

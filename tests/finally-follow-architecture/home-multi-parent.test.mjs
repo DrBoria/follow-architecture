@@ -20,17 +20,27 @@ const ARCH = JSON.stringify({
 		{ slug: "beta", name: "beta", parent: "src", children: ["store.ts", "actions", "**/*.ts"] },
 		{
 			slug: "actions",
+			role: "action",
 			name: "actions",
 			parent: ["alpha", "beta"],
 			children: ["**/*.ts"],
-			location: { declaration: ["action"] },
+
 		},
 	],
 	codeRoles: [
 		{
 			slug: "action",
-			infer: [{ calledBy: { equals: "actions" } }],
+			// Identity: it writes into the model it was handed — that is what an MST
+			// action IS, and the write is visible as one `assignments` fact.
+			infer: [{ assignments: { length: { gt: 0 } } }],
+			// An action writes into the model it was handed, so it must be allowed to
+			// assign: the relation is closed like every other one.
+			actions: { declare: { where: ["**/*.ts"] }, export: { where: ["**/*.ts"] }, assign: { where: ["**/*.ts"] } },
+			// `in` names the multi-parent node: every branch is a home.
 		},
+		// The model the actions hang off: a declaration of its own, and it has to be
+		// described too — a declaration is a relation like any other.
+		{ slug: "model", infer: [{ name: { equals: "M" } }], actions: { declare: { where: ["**/*.ts"] }, export: { where: ["**/*.ts"] } } },
 	],
 	invariants: [],
 });
@@ -81,14 +91,14 @@ describe("role home with a multi-parent home node", () => {
 	it("points an action at ITS OWN feature's actions folder, not the first variant", () => {
 		const { printed, code } = runFile("src/beta/store.ts");
 		expect(code).toBe(1);
-		expect(printed).toContain("belong in `src/beta/actions`");
+		expect(printed).toContain("belongs in `src/beta/actions`");
 		expect(printed).not.toContain("src/alpha/actions");
 	});
 
 	it("same for the first parent's own file", () => {
 		const { printed, code } = runFile("src/alpha/store.ts");
 		expect(code).toBe(1);
-		expect(printed).toContain("belong in `src/alpha/actions`");
+		expect(printed).toContain("belongs in `src/alpha/actions`");
 	});
 
 	it("an action living in any feature's actions folder is a fit, not a misfit", () => {

@@ -507,7 +507,7 @@ README переписать после рефакторинга по факти�
 
 Узловое поле `home: [role, ...]` было вторым, дублирующим интерфейсом
 ответа на «где живёт роль». Теперь это `location.declaration: [role, ...]` —
-тот же самый `location`, что и `import`/`usage`/`scopeAccess`.
+тот же самый `location`, что и `import`/`call`/`scopeAccess`.
 
 - `nodes/tree.js` — `parseLocation` парсит `declaration` как список ролей
   (старая форма `{node: slug}` не использовалась нигде и удалена); `make`

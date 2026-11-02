@@ -14,32 +14,25 @@ const factsFor = (code, rel = "a/x.ts", repoFiles) => {
 	const files = repoFiles ?? [rel];
 	const sf = loadSourceFile(project, rel, code);
 	const importMap = importNameModules(sf, ".", {}, files);
-	const candidates = collectCandidates(sf, importMap);
+	const candidates = collectCandidates(sf, importMap, rel, ".");
 	return { sf, facts: collectFileFacts(sf, { rel, repoFiles: files, aliases: {}, repoRoot: ".", candidates }) };
 };
 
 // A function-like candidate (not the VariableDeclaration that shares its name).
-const fn = (facts, name) => facts.candidates.find((c) => c.name === name && c.kind !== "VariableDeclaration");
-
-const scopeFactsFor = (code, rel = "a/x.ts", scopeAccessors = [{ kind: "call", segments: ["getRoot"] }, { kind: "call", segments: ["getParent"] }]) => {
-	const sf = loadSourceFile(project, rel, code);
-	const importMap = importNameModules(sf, ".", {}, [rel]);
-	const candidates = collectCandidates(sf, importMap);
-	return collectFileFacts(sf, { rel, repoFiles: [rel], aliases: {}, repoRoot: ".", candidates, scopeAccessors });
-};
+const fn = (facts, name) => facts.candidates.find((c) => c.name === name && c.kind.own.is !== "VariableDeclaration");
 
 describe("ast.collectFileFacts — lines & kinds", () => {
-	it("counts lines (split on \\n, trailing newline adds one)", () => {
+	it("lines is ONE array: first line, everything inside, last line", () => {
 		const { facts } = factsFor("const a = 1;\nconst b = 2;\n");
-		expect(facts.lines).toBe(3);
+		expect(facts.lines).toEqual([1, 2, 3]);
 		const { facts: f2 } = factsFor("const a = 1;\nconst b = 2;");
-		expect(f2.lines).toBe(2);
+		expect(f2.lines).toEqual([1, 2]);
 	});
 
 	it("top-level statements are descendants at depth 0", () => {
 		const { facts } = factsFor("const a = 1;\nfunction f() {}\nexport class C {}\n");
-		const top = facts.descendants.filter((d) => d.depth === 0);
-		const kinds = top.map((d) => d.kind);
+		const top = facts.kind.descendants.filter((d) => d.depth === 0);
+		const kinds = top.map((d) => d.is);
 		expect(kinds).toContain("VariableStatement");
 		expect(kinds).toContain("FunctionDeclaration");
 		expect(kinds).toContain("ClassDeclaration");
@@ -57,16 +50,16 @@ describe("ast — candidate facts", () => {
 	it("a variable and its arrow initializer both appear as candidates", () => {
 		const { facts } = factsFor("const run = () => 1;\n");
 		const runs = facts.candidates.filter((c) => c.name === "run");
-		expect(runs.map((c) => c.kind).sort()).toEqual(["ArrowFunction", "VariableDeclaration"]);
+		expect(runs.map((c) => c.kind.own.is).sort()).toEqual(["ArrowFunction", "VariableDeclaration"]);
 	});
 
 	it("collects variable declarations with initializer facts", () => {
 		const { facts } = factsFor("const store = t.model({});\n");
-		const v = facts.candidates.find((c) => c.kind === "VariableDeclaration");
+		const v = facts.candidates.find((c) => c.kind.own.is === "VariableDeclaration");
 		expect(v).toBeDefined();
 		expect(v.name).toBe("store");
-		expect(v.initializer.kind).toBe("CallExpression");
-		expect(v.initializer.origin).toBe("t.model");
+		expect(v.kind.initializer.is).toBe("CallExpression");
+		expect(v.kind.initializer.origin).toBe("t.model");
 	});
 
 	it("counts calls with origin, action and resolved module", () => {
@@ -99,11 +92,27 @@ describe("ast — candidate facts", () => {
 		expect(c.assignments.some((a) => a.local && /state/.test(a.target))).toBe(true);
 	});
 
-	it("a method shorthand inside .actions((self) => ({...})) has calledBy 'actions'", () => {
+	it("a method shorthand inside .actions((self) => ({...})) is a candidate with its own lines", () => {
 		const { facts } = factsFor("const m = t.model({}).actions((self) => ({ doX() { self.n = 1; } }));\n");
 		const c = facts.candidates.find((x) => x.name === "doX");
 		expect(c).toBeDefined();
-		expect(c.calledBy).toBe("actions");
+		expect(c.lines[0]).toBe(1);
+		// The callback it lives in is anonymous, so no NAMED piece encloses it.
+		expect(c.location.piece).toBe(null);
+	});
+});
+
+describe("ast — body shape", () => {
+	it("an empty body holds nothing but the Block — no action at all", () => {
+		const { facts } = factsFor(
+			"function empty() {}\nconst expr = () => 1;\nconst block = () => { a(); b(); };\ndeclare function noBody(): void;\n",
+		);
+		expect(fn(facts, "empty").kind.descendants.map((d) => d.is).filter((is) => !is.endsWith("Keyword"))).toEqual(["Block"]);
+		expect(fn(facts, "empty").calls).toEqual([]);
+		expect(fn(facts, "expr").calls).toEqual([]);
+		expect(fn(facts, "block").calls).toHaveLength(2);
+		expect(fn(facts, "noBody").calls).toEqual([]);
+		expect(fn(facts, "noBody").returns).toEqual([]);
 	});
 });
 
@@ -114,7 +123,6 @@ describe("ast — returns facts", () => {
 		expect(c.returns).toHaveLength(1);
 		expect(c.returns[0].kind).toBe("ReturnStatement");
 		expect(c.returns[0].exprKind).toBe("ObjectLiteralExpression");
-		expect(c.hasReturn).toBe(true);
 	});
 
 	it("expression body: ObjectLiteralExpression with paren unwrap, members as raw data", () => {
@@ -125,8 +133,9 @@ describe("ast — returns facts", () => {
 		expect(body.exprKind).toBe("ObjectLiteralExpression");
 		// `members` is raw data — "has methods" is a query over it, not a fact.
 		expect(body.members.map((m) => m.name).sort()).toEqual(["n", "run"]);
-		expect(body.members.find((m) => m.name === "run").isFunction).toBe(true);
-		expect(body.members.find((m) => m.name === "n").isFunction).toBe(false);
+		// The member's KIND is the data: "has methods" is asked by the rule.
+		expect(body.members.find((m) => m.name === "run").is).toBe("PropertyAssignment");
+		expect(body.members.find((m) => m.name === "n").is).toBe("PropertyAssignment");
 	});
 
 	it("expression body without parens", () => {
@@ -180,39 +189,40 @@ describe("ast — returns facts", () => {
 });
 
 describe("ast — nesting", () => {
-	it("marks nested functions with parentName", () => {
+	it("records the piece a nested function sits in", () => {
 		const { facts } = factsFor("function outer() { function inner() { return 1; } return inner(); }\n");
 		const inner = fn(facts, "inner");
-		expect(inner.parentName).toBe("outer");
-		expect(inner.moduleScope).toBe(false);
+		expect(inner.location.piece).toBe("outer");
+		expect(inner.kind.ancestors.some((a) => a.is === "FunctionDeclaration")).toBe(true);
 		// The nested flag lives on the descendant facts.
 		const outer = fn(facts, "outer");
-		expect(outer.descendants.some((d) => d.kind === "FunctionDeclaration" && d.nested)).toBe(true);
+		expect(outer.kind.descendants.some((d) => d.is === "FunctionDeclaration" && d.depth > 0)).toBe(true);
 	});
 
 	it("top-level functions are module-scope", () => {
 		const { facts } = factsFor("function outer() { return 1; }\n");
 		const c = fn(facts, "outer");
-		expect(c.moduleScope).toBe(true);
+		expect(c.location.piece).toBe(null);
+		expect(c.kind.ancestors.some((a) => a.is === "FunctionDeclaration")).toBe(false);
 	});
 });
 
-describe("ast — module scope variables (candidates with moduleScope: true)", () => {
-	it("collects module-scope mutable variables", () => {
+describe("ast — module scope variables (candidates with piece: null)", () => {
+	it("collects module-scope variables and whether the binding may change", () => {
 		const { facts } = factsFor("let counter = 0;\nconst frozen = 1;\n");
-		const vars = facts.candidates.filter((c) => c.moduleScope && c.kind === "VariableDeclaration");
-		expect(vars.some((v) => v.name === "counter" && v.mutable)).toBe(true);
-		expect(vars.some((v) => v.name === "frozen" && !v.mutable)).toBe(true);
+		const vars = facts.candidates.filter((c) => c.location.piece === null && c.kind.own.is === "VariableDeclaration");
+		expect(vars.some((v) => v.name === "counter" && v.mutable === true)).toBe(true);
+		expect(vars.some((v) => v.name === "frozen" && v.mutable === false)).toBe(true);
 	});
 
 	it("records the initializer origin (constructor for `new X`, kind otherwise)", () => {
 		const { facts } = factsFor("const cache = new Map();\nconst set = new Set();\nconst obj = { a: 1 };\n");
 		const byName = Object.fromEntries(
-			facts.candidates.filter((c) => c.moduleScope && c.kind === "VariableDeclaration").map((v) => [v.name, v]),
+			facts.candidates.filter((c) => c.location.piece === null && c.kind.own.is === "VariableDeclaration").map((v) => [v.name, v]),
 		);
-		expect(byName.cache.initializer.origin).toBe("new Map");
-		expect(byName.set.initializer.origin).toBe("new Set");
-		expect(byName.obj.initializer.kind).toBe("ObjectLiteralExpression");
+		expect(byName.cache.kind.initializer.origin).toBe("new Map");
+		expect(byName.set.kind.initializer.origin).toBe("new Set");
+		expect(byName.obj.kind.initializer.is).toBe("ObjectLiteralExpression");
 	});
 });
 
@@ -221,18 +231,18 @@ const folderFactsFor = (files, rel) => {
 	const repoFiles = Object.keys(files);
 	const sf = loadSourceFile(project, rel, files[rel]);
 	const importMap = importNameModules(sf, ".", {}, repoFiles);
-	const candidates = collectCandidates(sf, importMap);
+	const candidates = collectCandidates(sf, importMap, rel, ".");
 	return collectFileFacts(sf, { rel, repoFiles, aliases: {}, repoRoot: ".", candidates });
 };
 
 describe("ast — path fact", () => {
 	it("splits dir and fileName (basename without extension)", () => {
 		const { facts } = factsFor("const a = 1;\n", "apps/backend/utils/host-types.ts");
-		expect(facts.path.dir).toBe("apps/backend/utils");
-		expect(facts.path.fileName).toBe("host-types");
+		expect(facts.location.dir).toBe("apps/backend/utils");
+		expect(facts.location.fileName).toBe("host-types");
 	});
 
-	it("records folder siblings: filesPerFolder, folderFiles, subfolders", () => {
+	it("records the folder's own files — the count is files.length", () => {
 		const facts = folderFactsFor(
 			{
 				"a/text-mate.ts": "",
@@ -241,41 +251,8 @@ describe("ast — path fact", () => {
 			},
 			"a/text-mate.ts",
 		);
-		expect(facts.path.filesPerFolder).toBe(2);
-		expect(facts.path.folderFiles).toEqual(["other", "text-mate"]);
-		expect(facts.path.subfolders).toEqual(["sub"]);
-	});
-});
-
-describe("ast — path.sharedPrefixes fact", () => {
-	it("finds leading dash-boundary stems shared by several siblings", () => {
-		const facts = folderFactsFor(
-			{
-				"a/text-mate.ts": "",
-				"a/text-mate-grammar.ts": "",
-				"a/text-mate-resolve.ts": "",
-				"a/other.ts": "",
-			},
-			"a/text-mate.ts",
-		);
-		const byStem = Object.fromEntries(facts.path.sharedPrefixes.map((p) => [p.stem, p]));
-		// `text` is shared by all three text-mate files. `text-mate` is a stem
-		// only of the two longer names (a stem must be followed by a dash).
-		expect(byStem["text"].count).toBe(3);
-		expect(byStem["text-mate"].count).toBe(2);
-		// A stem shared by only one file is not recorded.
-		expect(byStem["other"]).toBeUndefined();
-	});
-
-	it("is empty when no stem is shared", () => {
-		const facts = folderFactsFor(
-			{
-				"a/alpha.ts": "",
-				"a/beta.ts": "",
-			},
-			"a/alpha.ts",
-		);
-		expect(facts.path.sharedPrefixes).toEqual([]);
+		expect(facts.location.files).toEqual(["other", "text-mate"]);
+		expect(facts.location.files).toHaveLength(2);
 	});
 });
 
@@ -287,13 +264,13 @@ describe("ast — exports fact", () => {
 			["a/x.ts", "a/mod.ts", "a/ns.ts", "a/all.ts"],
 		);
 		expect(facts.exports).toHaveLength(3);
-		const named = facts.exports.find((e) => e.kind === "named");
+		const named = facts.exports.find((e) => e.form === "named");
 		expect(named.named).toEqual(["x", "z"]);
 		expect(named.from).toBe("a/mod.ts");
-		const ns = facts.exports.find((e) => e.kind === "namespace");
+		const ns = facts.exports.find((e) => e.form === "namespace");
 		expect(ns.named).toEqual(["ns"]);
 		expect(ns.from).toBe("a/ns.ts");
-		expect(facts.exports.find((e) => e.kind === "star")).toBeDefined();
+		expect(facts.exports.find((e) => e.form === "star")).toBeDefined();
 	});
 });
 
@@ -312,7 +289,7 @@ describe("ast — import facts", () => {
 describe("ast — candidate kinds", () => {
 	it("collects function-like and variable-declaration candidates", () => {
 		const { facts } = factsFor("function f() {}\nconst g = () => 1;\nconst h = { a: 1 };\n");
-		const kinds = facts.candidates.map((c) => c.kind);
+		const kinds = facts.candidates.map((c) => c.kind.own.is);
 		expect(kinds).toContain("FunctionDeclaration");
 		expect(kinds).toContain("ArrowFunction");
 		expect(kinds).toContain("VariableDeclaration");
@@ -325,67 +302,75 @@ describe("ast — candidate kinds", () => {
 	});
 });
 
-describe("ast — scopeAccesses fact", () => {
-	it("records property-access chains rooted at a configured scope accessor", () => {
-		const code = `
-import { getRoot } from "mobx-state-tree";
-const f = (self) => {
-	getRoot(self).grammar.loadGrammar();
-	getRoot(self).reparse.schedule();
-};
-`;
-		const facts = scopeFactsFor(code);
-		const byChain = Object.fromEntries(facts.scopeAccesses.map((s) => [s.chain.join("."), s]));
-		// Every level of the chain is a fact (both the bare store ref and the method call).
-		expect(byChain["grammar"]).toBeDefined();
-		expect(byChain["grammar.loadGrammar"]).toBeDefined();
-		expect(byChain["reparse.schedule"]).toBeDefined();
-		expect(byChain["grammar"].via).toBe("getRoot");
-		expect(byChain["grammar"].line).toBe(4);
-		expect(byChain["reparse.schedule"].line).toBe(5);
-	});
-
-	it("records getParent chains with via = the accessor as written", () => {
-		const code = `
-const f = (self) => {
-	getParent(self).sibling.doThing();
-};
-`;
-		const facts = scopeFactsFor(code);
-		expect(facts.scopeAccesses).toContainEqual(expect.objectContaining({ via: "getParent", chain: ["sibling", "doThing"] }));
-	});
-
-	it("ignores chains whose base is not a configured accessor", () => {
-		const code = `
-const f = (self) => {
-	self.other.doThing();
-	lookup().x.y();
-};
-`;
-		const facts = scopeFactsFor(code);
-		expect(facts.scopeAccesses).toEqual([]);
-	});
-
-	it("respects the accessor list — unconfigured accessors are not recorded", () => {
-		const code = `
-const f = (self) => {
-	getRoot(self).a.b();
-	fromStore(self).c.d();
-};
-`;
-		const facts = scopeFactsFor(code, "a/x.ts", [{ kind: "call", segments: ["getRoot"] }]);
-		// the outermost (method-call) access is recorded first, the bare ref after
-		expect(facts.scopeAccesses.map((s) => s.chain.join("."))).toEqual(["a.b", "a"]);
-	});
-
-	it("is empty when no accessors are configured", () => {
-		const code = `
-const f = (self) => {
-	getRoot(self).a.b();
-};
-`;
-		const facts = scopeFactsFor(code, "a/x.ts", []);
-		expect(facts.scopeAccesses).toEqual([]);
+describe("ast.collectFileFacts — before classification", () => {
+	// The pipeline asks for the file facts BEFORE it knows any roles: a role may
+	// be recognised by what the file depends on, not only by its own shape. Only
+	// `candidates` / `roles` need the classification, so the facts are complete
+	// without them — that is what makes one collector enough for both readers.
+	it("is complete with no candidates, and gets its candidates later", () => {
+		const sf = loadSourceFile(project, "a/x.ts", "import * as vscode from 'vscode';\nexport const go = () => 1;\n");
+		const early = collectFileFacts(sf, { rel: "a/x.ts", repoFiles: ["a/x.ts"], aliases: {}, repoRoot: ".", candidates: [] });
+		expect(early.candidates).toEqual([]);
+		expect(early.roles).toEqual([]);
+		// Everything a role may want to filter on is already there.
+		expect(early.imports.map((i) => i.source)).toEqual(["vscode"]);
+		expect(early.location.dir).toBe("a");
+		expect(early.lines).toEqual([1, 2, 3]);
+		expect(early.roles).toEqual([]);
 	});
 });
 
+describe("ast — one fact per question", () => {
+	// The fact set is a CONTRACT: every fact answers ONE question, and a question
+	// already answered by an action (`call`, `assign`, `declare`, `export`) has no
+	// second field. Pinned so the old duplicates cannot creep back.
+	// `file` and `role` are attached by the pipeline (classification), not here.
+	const CANDIDATE_FACTS = ["assignments", "calls", "exported", "kind", "lines", "location", "mutable", "name", "parameters", "returns"];
+
+	it("a candidate is location + lines + parameters + actions, and nothing else", () => {
+		const { facts } = factsFor("export const run = (state: { x: number }) => { state.x = 1; return 1; };\n");
+		const c = fn(facts, "run");
+
+		expect(Object.keys(c).sort()).toEqual(CANDIDATE_FACTS);
+		// `line` and `lines` are one thing: the array says where it starts.
+		expect(c.lines[0]).toBe(1);
+		// `parentName`, `calledBy`, `modifiers`, `declarationToken`, `bodyStatements`,
+		// `mutatedParams`, `callModules`, `writes`, `mutations` are gone: each was a
+		// second spelling of `piece`, a `call`, an `export`, a `declare` or a write.
+		for (const gone of ["line", "path", "piece", "descendants", "parentName", "calledBy", "modifiers", "declarationToken", "bodyStatements", "mutatedParams", "callModules", "writes", "mutations"]) {
+			expect(c).not.toHaveProperty(gone);
+		}
+	});
+
+	it("a write carries its own classification: mutate, assign, or nothing", () => {
+		const { facts } = factsFor(
+			"import { store } from './s';\nconst run = (state: { x: number }) => { const out = { n: 0 }; out.n = 1; state.x = 2; store.y = 3; this.z = 4; };\n",
+			"a/x.ts",
+			["a/x.ts", "a/s.ts"],
+		);
+		const byTarget = Object.fromEntries(fn(facts, "run").assignments.map((a) => [a.target, a.relation]));
+		expect(byTarget["out.n"]).toBe(null);
+		expect(byTarget["state.x"]).toBe("assign");
+		expect(byTarget["store.y"]).toBe("mutate");
+		expect(byTarget["this.z"]).toBe("mutate");
+	});
+
+	it("a file's imports and exports are ONE list each, told apart by `form`", () => {
+		const { facts } = factsFor(
+			'import a from "./a";\nconst b = require("./b");\nconst c = import("./c");\nexport * as ns from "./ns";\nmodule.exports.r = 1;\n',
+			"a/x.ts",
+			["a/x.ts", "a/a.ts", "a/b.ts", "a/c.ts", "a/ns.ts"],
+		);
+		expect(facts.imports.map((i) => i.form).sort()).toEqual(["dynamic", "require", "statement"]);
+		expect(facts.exports.map((e) => e.form).sort()).toEqual(["commonjs", "namespace"]);
+		// A `require` inside a function belongs to that piece; a statement to the file.
+		expect(facts.imports.find((i) => i.form === "statement").piece).toBe(null);
+	});
+
+	it("everything about the file's place in the tree is `location`, and the count is files.length", () => {
+		const facts = folderFactsFor({ "a/x.ts": "", "a/y.ts": "", "a/deep/z.ts": "" }, "a/x.ts");
+		expect(Object.keys(facts.location).sort()).toEqual(["dir", "fileName", "files", "path"]);
+		expect(facts.location.path).toBe("a/x.ts");
+		expect(facts.location.files).toEqual(["x", "y"]);
+	});
+});

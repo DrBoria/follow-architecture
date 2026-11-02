@@ -10,26 +10,26 @@ const fnKinds = ["FunctionDeclaration", "FunctionExpression", "ArrowFunction", "
 const codeRoles = {
 	storeModel: {
 		infer: [
-			{ kind: { equals: "VariableDeclaration" } },
-			{ initializer: { kind: { in: ["CallExpression", "NewExpression"] }, origin: { equals: "t.model" } } },
+			{ kind: { own: { is: { equals: "VariableDeclaration" } } } },
+			{ kind: { initializer: { is: { in: ["CallExpression", "NewExpression"] }, origin: { equals: "t.model" } } } },
 		],
 	},
 	factory: {
 		infer: [
-			{ kind: { in: fnKinds } },
-			{ returns: { some: { exprKind: { equals: "ObjectLiteralExpression" }, members: { some: { isFunction: { equals: true } } } } } },
+			{ kind: { own: { is: { in: fnKinds } } } },
+			{ returns: { any: { exprKind: { equals: "ObjectLiteralExpression" }, members: { any: { isFunction: { equals: true } } } } } },
 		],
 	},
 	pureFunction: {
 		infer: [
-			{ kind: { in: fnKinds } },
+			{ kind: { own: { is: { in: fnKinds } } } },
 			{ calls: { length: { equals: 0 } } },
 			{ assignments: { none: { local: { equals: true } } } },
 		],
 	},
 	orchestrator: {
 		infer: [
-			{ kind: { in: fnKinds } },
+			{ kind: { own: { is: { in: fnKinds } } } },
 			{ calls: { length: { gt: 0 } } },
 		],
 	},
@@ -38,7 +38,7 @@ const codeRoles = {
 // Real candidates always carry these list facts (ast.js collects them even
 // when empty), so the fixtures mirror that.
 const fn = (name, extra = {}) => ({
-	kind: "ArrowFunction",
+	kind: { own: { is: "ArrowFunction" } },
 	name,
 	line: 1,
 	returns: [],
@@ -50,7 +50,7 @@ const fn = (name, extra = {}) => ({
 describe("classifyRoles", () => {
 	it("classifies a store model variable", () => {
 		const { present, candidates } = classifyRoles(
-			[{ kind: "VariableDeclaration", name: "documentStore", line: 1, initializer: { kind: "CallExpression", origin: "t.model" } }],
+			[{ kind: { own: { is: "VariableDeclaration" }, initializer: { is: "CallExpression", origin: "t.model" } }, name: "documentStore", line: 1 }],
 			codeRoles,
 		);
 		expect(present).toEqual(["storeModel"]);
@@ -112,13 +112,13 @@ describe("classifyRoles", () => {
 	it("keeps function and variable roles separate (no more kind-split maps)", () => {
 		const { roleCtx } = classifyRoles(
 			[
-				{ kind: "VariableDeclaration", name: "store", line: 1, initializer: { kind: "CallExpression", origin: "t.model" } },
+				{ kind: { own: { is: "VariableDeclaration" }, initializer: { is: "CallExpression", origin: "t.model" } }, name: "store", line: 1 },
 				fn("runThing", { calls: [{ action: "x" }] }),
 			],
 			codeRoles,
 		);
-		expect(roleCtx.candidates.find((c) => c.kind === "VariableDeclaration").role).toBe("storeModel");
-		expect(roleCtx.candidates.find((c) => c.kind === "ArrowFunction").role).toBe("orchestrator");
+		expect(roleCtx.candidates.find((c) => c.kind.own.is === "VariableDeclaration").role).toBe("storeModel");
+		expect(roleCtx.candidates.find((c) => c.kind.own.is === "ArrowFunction").role).toBe("orchestrator");
 		expect(roleCtx.present).toEqual(["storeModel", "orchestrator"]);
 	});
 
@@ -129,24 +129,55 @@ describe("classifyRoles", () => {
 	});
 
 	it("classifies a .actions() method as an action but not the bag callback", () => {
-		// Mirrors the md-prettify `action` role: calledBy "actions" plus a
-		// parentKind that is not the .actions() CallExpression itself.
+		// Mirrors the md-prettify `action` role: a function that WRITES into state it
+		// was handed, and whose parent is not the `.actions()` call itself.
 		const roles = {
 			action: {
 				infer: [
-					{ kind: { in: fnKinds } },
-					{ calledBy: { equals: "actions" } },
-					{ parentKind: { notIn: ["CallExpression"] } },
+					{ kind: { own: { is: { in: fnKinds } } } },
+					{ assignments: { length: { gt: 0 } } },
+					{ kind: { parent: { is: { notIn: ["CallExpression"] } } } },
 				],
 			},
 			...codeRoles,
 		};
-		const actionMethod = fn("toggleLine", { kind: "MethodDeclaration", calledBy: "actions", parentKind: "ObjectLiteralExpression" });
-		const bagCallback = fn(null, { calledBy: "actions", parentKind: "CallExpression" });
+		const write = [{ line: 2, target: "self.x", value: "self", param: true, relation: "assign" }];
+		const actionMethod = fn("toggleLine", { assignments: write, kind: { own: { is: "MethodDeclaration" }, parent: { is: "ObjectLiteralExpression" } } });
+		const bagCallback = fn(null, { assignments: [], kind: { own: { is: "ArrowFunction" }, parent: { is: "CallExpression" } } });
 		const { candidates } = classifyRoles([bagCallback, actionMethod], roles);
 		expect(candidates.find((c) => c.name === "toggleLine").role).toBe("action");
 		// The callback that RETURNS the bag is not an action.
 		expect(candidates.find((c) => c.name === null).role).not.toBe("action");
 	});
+
 });
 
+describe("classifyRoles — a role may be recognised by what the FILE depends on", () => {
+	// "Host adapter, not a helper" is a property of the dependency, not of the
+	// folder: the same function is glue wherever it sits, so a misplaced one is
+	// still classified (and therefore still reported) instead of being ignored.
+	const roles = {
+		extensionCode: {
+			infer: [{ kind: { own: { is: { in: fnKinds } } } }, { file: { imports: { any: { source: { in: ["vscode", "webstorm"] } } } } }],
+		},
+		pureFunction: { infer: [{ kind: { own: { is: { in: fnKinds } } } }] },
+	};
+	const hostFile = { imports: [{ source: "vscode", named: [], line: 1, resolved: null }], path: { dir: "packages/vscode-extension" } };
+	const plainFile = { imports: [{ source: "path", named: [], line: 1, resolved: null }], path: { dir: "packages/utils" } };
+
+	it("picks the role whose file filter matches the file", () => {
+		const { candidates } = classifyRoles([fn("activate", { file: hostFile })], roles);
+		expect(candidates[0].role).toBe("extensionCode");
+	});
+
+	it("falls through to the generic role when the file does not touch the host", () => {
+		const { candidates } = classifyRoles([fn("capitalise", { file: plainFile })], roles);
+		expect(candidates[0].role).toBe("pureFunction");
+	});
+
+	it("sees the whole file fact set, not a hand-picked field", () => {
+		const archRoles = { inHostDir: { infer: [{ file: { path: { dir: { equals: "packages/vscode-extension" } } } }] } };
+		const { candidates } = classifyRoles([fn("anything", { file: hostFile })], archRoles);
+		expect(candidates[0].role).toBe("inHostDir");
+	});
+});

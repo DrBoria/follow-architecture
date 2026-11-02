@@ -66,11 +66,41 @@ describe("pattern.compilePattern — placeholders", () => {
 		expect(re.test("decoratedText")).toBe(false);
 	});
 
-	it("unknown placeholder = any non-slash segment", () => {
-		const { re, names } = compilePattern("{whatever}.ts");
-		expect(names).toEqual(["whatever"]);
+	it("the convention is read off the name: any kebab name is kebab", () => {
+		const { re, names } = compilePattern("{feature-name}.ts");
+		expect(names).toEqual(["feature-name"]);
+		expect(re.test("todo-list.ts")).toBe(true);
+		expect(re.test("todoList.ts")).toBe(false);
+	});
+
+	it("{UPPER_CASE} and {snake_case} are conventions too", () => {
+		expect(compilePattern("{UPPER_CASE}").re.test("MAX_RETRIES")).toBe(true);
+		expect(compilePattern("{UPPER_CASE}").re.test("maxRetries")).toBe(false);
+		expect(compilePattern("{file_name}").re.test("file_name")).toBe(true);
+		expect(compilePattern("{file_name}").re.test("file-name")).toBe(false);
+	});
+
+	it("{myCase} is camel and {NAME} is a capitalised word", () => {
+		expect(compilePattern("{myCase}").re.test("todoList")).toBe(true);
+		expect(compilePattern("{myCase}").re.test("TodoList")).toBe(false);
+		expect(compilePattern("{NAME}").re.test("Document")).toBe(true);
+		expect(compilePattern("{NAME}").re.test("document")).toBe(false);
+	});
+
+	it("a name that states no convention still captures, and enforces nothing", () => {
+		const { re, names } = compilePattern("{Mixed_Name}.ts");
+		expect(names).toEqual(["Mixed_Name"]);
 		expect(re.test("anything-goes.ts")).toBe(true);
 		expect(re.test("a/b.ts")).toBe(false);
+	});
+
+	it("a placeholder may be followed by a dotted tail in the same segment", () => {
+		// `{kebab-case}.spec.ts` — the file's NAME is the placeholder, the rest is
+		// literal. This is how a test file is declared next to the code it tests.
+		const { re } = compilePattern("apps/{kebab-case}.spec.ts");
+		expect(re.test("apps/todo-list.spec.ts")).toBe(true);
+		expect(re.test("apps/todo-list.ts")).toBe(false);
+		expect(re.test("apps/TodoList.spec.ts")).toBe(false);
 	});
 
 	it("placeholders capture", () => {

@@ -1,52 +1,143 @@
 "use strict";
 
-// Normalize the YAML `codeRoles` section. The roles are passed through as-is:
-// the engine (classify.js) interprets them directly. Normalization validates
-// that each role is an object, compiles its optional `except` globs (the same
-// pattern language as invariant `except`) to regexes, and normalizes its
-// `scopeAccessors` to structured `{ kind, segments }` roots (kind ∈ call /
-// identifier / methodCall — see `normalizeScopeAccessor` below).
+// Normalize the YAML `codeRoles` section — the architecture's model of WHAT
+// code is. A role is the whole description of one kind of code:
+//
+//   infer    — how to recognise it (filters over ts-morph facts)
+//   where    — WHERE code of this role may be declared (its home)
+//   report   — what to say when it is declared elsewhere
+//   actions  — what may be done with it, and BY WHOM:
+//                actions.import.where   — who may import it
+//                actions.call.where     — who may call it
+//                actions.mutate.where   — who may write INTO it
+//                actions.assign.where   — who may write into what it was handed
+//                actions.read.where     — who may read it
+//              `where` is THE shared mechanism (utils/where.js): the same
+//              entry interface invariants use for `where` / `except`.
+//
+// `scopeAccess` (on an action) lists the chain roots through which that code
+// is reached WITHOUT an import: `{ scope, segments }` — `scope` says what the
+// root IS (`function` / `object` / `method`), `segments` says how it is
+// spelled (`getRoot`, `self.root`, `parent.get`).
 
-const { compilePattern } = require("../utils/pattern");
+const { parseWhere, toList } = require("../utils/where");
+const { FACT_KINDS } = require("../entities/kinds");
 
-const listOf = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+// Keys of a role that describe the role itself, not an action on it.
+const ROLE_KEYS = new Set(["slug", "name", "infer", "report", "actions"]);
 
-// One `scopeAccessors` entry: `{ kind, segments }` where kind is one of
-// "call" / "identifier" / "methodCall" and segments is a non-empty list of
-// identifier names. For `identifier` entries the list spans the base
-// identifier plus leading property names (e.g. `["self", "root"]`); for
-// `call` / `methodCall` it is exactly the callee segments.
+// `infer` entries: a bare string is a REFERENCE to another role ("this is code
+// that already got that role"), which is how roles compose.
+const parseInfer = (entry) => (typeof entry === "string" ? { role: { equals: entry } } : entry);
+
+// What a chain root IS. `scope`, not `kind`: this entry describes a place code
+// is reached from, and `kind` already means "the ts-morph kind of a node"
+// everywhere else in the engine.
+const SCOPES = ["function", "object", "method"];
+
+// One `scopeAccess` entry — what the root is, and how it is spelled:
+//   { scope: function, segments: [getRoot] }        `getRoot(self).x`
+//   { scope: object,   segments: [self, root] }     `self.root.x`
+//   { scope: method,   segments: [parent, get] }    `parent.get("n").x`
 const normalizeScopeAccessor = (e) => {
-	if (typeof e === "string") throw new Error(`scopeAccessors entries must be structured { kind, segments } objects, got string "${e}"`);
-	const kind = e?.kind;
-	if (!["call", "identifier", "methodCall"].includes(kind)) throw new Error(`scopeAccessors entry has invalid kind ${JSON.stringify(kind)} (expected "call" | "identifier" | "methodCall")`);
-	const segments = listOf(e.segments).map(String);
-	if (!segments.length || segments.some((s) => !s)) throw new Error(`scopeAccessors entry for kind "${kind}" needs a non-empty segments list of identifiers`);
-	return { kind, segments };
+	if (typeof e === "string") return { scope: "function", segments: [e] };
+	const scope = e?.scope;
+	if (!SCOPES.includes(scope)) {
+		throw new Error(`scopeAccess scope must be one of ${SCOPES.join(" | ")}, got ${JSON.stringify(scope)}`);
+	}
+	const segments = toList(e.segments).map(String);
+	if (!segments.length || segments.some((x) => !x)) throw new Error(`scopeAccess entry for scope "${scope}" needs a non-empty segments list`);
+	return { scope, segments };
 };
 
-const normalizeCodeRoles = (raw) => {
-	if (!raw) return {};
-	// Roles may be declared as a LIST of `{ slug, ... }` entries or as a MAP
-	// keyed by slug. Both normalize to the same `{ [slug]: role }` shape; in
-	// the list form order matters (first match wins), in the map form the
-	// YAML key order is preserved by the parser.
-	const defs = Array.isArray(raw)
-		? raw
-		: Object.entries(raw).map(([k, v]) => (v && typeof v === "object" ? { ...v, slug: v.slug ?? k } : null));
-	if (defs.length === 0) return {};
-	const out = {};
-	for (const def of defs) {
-		if (!def || typeof def !== "object") throw new Error("codeRoles: each entry must be an object with a `slug`");
-		const name = def.slug;
-		if (!name) throw new Error("codeRoles: each entry needs a `slug`");
-		// `scopeAccessors` declares the structured chain roots that REACH this
-		// role (e.g. call `getRoot`, identifier `global` / `self.root`,
-		// methodCall `parent.get` for a store model). Per-role on purpose:
-		// different roles may be reached through different mechanisms.
-		out[name] = { ...def, except: listOf(def.except).map((p) => compilePattern(String(p))), scopeAccessors: listOf(def.scopeAccessors).map(normalizeScopeAccessor) };
+// Everything an action may carry, and how each key is read. This map IS the
+// validation: a key that is not here is a rule the YAML believes it made, and
+// is rejected by name. There is no second list to keep in sync.
+const ACTION_KEYS = {
+	where: (spec, roles) => parseWhere(spec.where, roles),
+	// `of: call` — this action is checked against the `call` fact class. Lets a
+	// design use its own vocabulary (emit / subscribe / dispatch / provide)
+	// without the engine knowing that vocabulary.
+	of: (spec) => {
+		if (!FACT_KINDS.includes(spec.of)) {
+			throw new Error(`codeRoles: action says \`of: ${spec.of}\` — the fact layer produces ${FACT_KINDS.join(" | ")}`);
+		}
+		return String(spec.of);
+	},
+	scopeAccess: (spec) => (toList(spec.scopeAccess).length ? toList(spec.scopeAccess).map(normalizeScopeAccessor) : null),
+};
+
+const normalizeAction = (name, spec, roles) => {
+	for (const key of Object.keys(spec)) {
+		if (!(key in ACTION_KEYS)) {
+			throw new Error(`codeRoles: action \`${name}.${key}\` is not an action key — use ${Object.keys(ACTION_KEYS).join(", ")}`);
+		}
+	}
+	const out = { where: parseWhere(spec.where, roles) };
+	if (spec.of != null) out.of = ACTION_KEYS.of(spec);
+	if (spec.scopeAccess != null) {
+		const scopeAccess = ACTION_KEYS.scopeAccess(spec);
+		if (scopeAccess) out.scopeAccess = scopeAccess;
 	}
 	return out;
 };
 
-module.exports = { normalizeCodeRoles };
+// Roles may name other roles in `infer` (a bare string): a typo must not
+// silently classify nothing.
+const checkReferences = (roles) => {
+	const bySlug = new Map(roles.map((r) => [r.slug, r]));
+	for (const role of roles) {
+		for (const entry of toList(role.infer)) {
+			if (typeof entry !== "string") continue;
+			if (!bySlug.has(entry)) throw new Error(`codeRoles: \`${role.slug}\` infers by unknown role \`${entry}\``);
+			if (entry === role.slug) throw new Error(`codeRoles: \`${role.slug}\` infers by itself`);
+		}
+	}
+	return roles;
+};
+
+const normalizeCodeRoles = (raw) => {
+	if (!raw) return {};
+	// Roles may be declared as a LIST of `{ slug, … }` entries or as a MAP
+	// keyed by slug. Both normalize to the same `{ [slug]: role }` shape; in
+	// the list form order matters (first match wins).
+	const defs = Array.isArray(raw)
+		? raw
+		: Object.entries(raw).map(([k, v]) => (v && typeof v === "object" ? { ...v, slug: v.slug ?? k } : null));
+	if (defs.length === 0) return {};
+	for (const def of defs) {
+		if (!def || typeof def !== "object") throw new Error("codeRoles: each entry must be an object with a `slug`");
+		if (!def.slug) throw new Error("codeRoles: each entry needs a `slug`");
+	}
+	checkReferences(defs);
+
+	const roleSlugs = new Set(defs.map((d) => d.slug));
+	const out = {};
+	for (const def of defs) {
+		const actions = {};
+		for (const [kind, spec] of Object.entries(def.actions ?? {})) {
+			// `declare` is the role's own `where` — one statement, not two.
+			if (!spec || typeof spec !== "object") throw new Error(`codeRoles: \`${def.slug}.actions.${kind}\` must be an object with \`where\``);
+			if (spec.where == null) throw new Error(`codeRoles: \`${def.slug}.actions.${kind}\` has no \`where\``);
+			actions[kind] = normalizeAction(`${def.slug}.actions.${kind}`, spec, roleSlugs);
+		}
+		if (def.where != null) {
+			throw new Error(
+				`codeRoles: \`${def.slug}.where\` — a role says WHAT code is, a node says WHERE it lives: move it to a child of the node that holds it — \`- { name: <file>, role: ${def.slug} }\` for one file, \`- { name: <folder>, role: ${def.slug} }\` for a whole folder`,
+			);
+		}
+		for (const key of Object.keys(def)) {
+			if (!ROLE_KEYS.has(key)) throw new Error(`codeRoles: \`${def.slug}.${key}\` is not a role key — actions belong under \`actions\``);
+		}
+		out[def.slug] = {
+			slug: def.slug,
+			name: def.name ?? def.slug,
+			infer: toList(def.infer).map(parseInfer),
+			report: def.report ?? null,
+			actions,
+		};
+	}
+	return out;
+};
+
+module.exports = {normalizeCodeRoles};

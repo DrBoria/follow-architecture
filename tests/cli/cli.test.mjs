@@ -10,8 +10,9 @@ const { main } = require("../../main");
 const ARCH = JSON.stringify({
 	nodes: {
 		apps: { slug: "apps", name: "apps", children: ["backend"] },
-		backend: { slug: "backend", name: "backend", parent: "apps", closed: true, children: ["index.ts", "package.json"] },
+		backend: { slug: "backend", name: "backend", parent: "apps", role: "entry", children: ["index.ts", "package.json"] },
 	},
+	codeRoles: [{ slug: "entry", infer: [{ kind: { own: { is: { equals: "VariableDeclaration" } } } }], actions: { declare: { where: ["**/*.ts"] }, export: { where: ["**/*.ts"] } } }],
 	invariants: [],
 });
 
@@ -52,7 +53,9 @@ describe("CLI --files", () => {
 	it("scans only the listed files (orphans computed over that set)", () => {
 		const { printed } = run(["--config", path.join(root, "architecture.json"), "--files", "apps/backend/host.ts"]);
 		expect(printed).toContain("host.ts");
-		expect(printed).not.toContain("index.ts");
+		// A finding NAMES the folder's allowed children (`index.ts` is one), so
+		// "not scanned" is asserted on the section header, not on any mention.
+		expect(printed).not.toContain("### `apps/backend/index.ts`");
 	});
 
 	it("skips files that do not exist", () => {
@@ -65,7 +68,7 @@ describe("CLI --files", () => {
 		const { printed } = run(["--config", path.join(root, "architecture.json")]);
 		// host.ts is an orphan → flagged; index.ts is clean → absent from the findings section.
 		expect(printed).toContain("host.ts");
-		expect(printed).not.toContain("index.ts");
+		expect(printed).not.toContain("### `apps/backend/index.ts`");
 	});
 
 	it("--check exits 1 when the listed files have findings", () => {
@@ -74,3 +77,34 @@ describe("CLI --files", () => {
 	});
 });
 
+
+describe("CLI scan scope", () => {
+	it("scans the tool's default extensions, and more when --ext adds them", () => {
+		// Scan scope is the TOOL's, never the architecture's — and it is an option,
+		// so a repo is not locked to the built-in list.
+		fs.writeFileSync(path.join(root, "apps", "backend", "notes.md"), "export const c = 3;\n");
+		const before = run(["--config", path.join(root, "architecture.json")]);
+		expect(before.printed).not.toContain("notes.md");
+		const after = run(["--config", path.join(root, "architecture.json"), "--ext", ".md"]);
+		expect(after.printed).toContain("notes.md");
+	});
+});
+
+describe("CLI --overview", () => {
+	it("writes a standalone HTML file instead of markdown", () => {
+		const out = path.join(root, "overview.html");
+		const { printed, code } = run(["--config", path.join(root, "architecture.json"), "--overview", out]);
+		expect(code).toBe(0);
+		expect(printed).toContain("wrote overview.html");
+		const html = fs.readFileSync(out, "utf8");
+		expect(html.startsWith("<!doctype html>")).toBe(true);
+		expect(html).toContain('id="arch-data"');
+		fs.rmSync(out, { force: true });
+	});
+
+	it("defaults the path when --overview is followed by another flag", () => {
+		const { printed } = run(["--config", path.join(root, "architecture.json"), "--overview", "--check"]);
+		expect(printed).toContain("architecture-overview.html");
+		fs.rmSync(path.join(root, "architecture-overview.html"), { force: true });
+	});
+});

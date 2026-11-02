@@ -12,14 +12,16 @@ const { main } = require("../../main");
 // the role, with the candidate's name and line.
 const ARCH = JSON.stringify({
 	nodes: {
-		// `kind: []` excludes the probe role, so a classified candidate in
-		// this node is a misfit and its top-level report fires.
-		src: { slug: "src", name: "src", kind: [], children: ["**/*.ts"] },
+		// The probe role's home is `src/probes`, so a probe candidate in `src/`
+		// is a misfit and its top-level report fires.
+		src: { slug: "src", name: "src", children: ["**/*.ts", "probes"] },
+		probes: { slug: "probes",
+		role: "probe", name: "probes", parent: "src", children: ["**/*.ts"] },
 	},
 	codeRoles: [
 		{
 			slug: "probe",
-			infer: [{ kind: { equals: "ArrowFunction" } }],
+			infer: [{ kind: { own: { is: { equals: "ArrowFunction" } } } }],
 			report: { message: "probe hit: {what}" },
 		},
 	],

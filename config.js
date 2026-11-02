@@ -5,9 +5,10 @@ const path = require("node:path");
 const { minimatch } = require("minimatch");
 const { loadArchitecture } = require("./main");
 const { checkFile } = require("./pipeline");
-const { DEFAULT_EXTS, DEFAULT_IGNORE_DIRS } = require("./utils/pattern");
+const { DEFAULT_EXTS, DEFAULT_IGNORE_DIRS, DEFAULT_SIMILARITY } = require("./utils/pattern");
 const { createTsProject } = require("./ast");
 const { toRel } = require("./utils/imports");
+const { collectFiles } = require("./utils/files");
 const pkg = require("./package.json");
 
 const CONFIG_NAMES = ["architecture.yaml", "architecture.yml", "architecture.json", "architecture.config.js"];
@@ -24,38 +25,11 @@ const findRepoRoot = (from) => {
 	}
 };
 
-const defaultConfigPath = (repoRoot) => {
-	for (const name of CONFIG_NAMES) {
-		if (fs.existsSync(path.join(repoRoot, name))) return path.join(repoRoot, name);
-	}
-	return path.join(repoRoot, "architecture.json");
-};
 
-// Repo-wide relative file list for cross-folder invariants (path.filesPerFolder).
-// Walked once per repo root and cached: the ESLint rule runs per file, and a
-// full walk per file would be O(n^2).
-const listRepoFiles = (repoRoot, exts, ignoreDirs) => {
-	const extSet = new Set(exts);
-	const ignoreSet = new Set(ignoreDirs);
-	const out = [];
-	const walk = (dir) => {
-		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-			const abs = path.join(dir, entry.name);
-			if (entry.isDirectory()) {
-				if (!ignoreSet.has(entry.name)) walk(abs);
-			} else if (extSet.has(path.extname(entry.name))) {
-				out.push(toRel(repoRoot, abs));
-			}
-		}
-	};
-	try {
-		walk(repoRoot);
-	} catch {
-		// unreadable tree: fall back to an empty list (folder facts degrade)
-	}
-	return out;
-};
 
+// Repo-wide relative file list for cross-folder invariants (location.files).
+// The ONE walker (utils/files.js), keyed by the repo root and cached: the ESLint
+// rule runs per file, and a full walk per file would be O(n^2).
 // Per-repo-root cache of the heavy per-run state: the architecture, the
 // ts-morph project, and the repo file list. The rule's create() runs once per
 // file; rebuilding the project every time would be the dominant cost.
@@ -68,7 +42,15 @@ const getRuleState = (repoRoot, opts) => {
 		// The CLI sets this in main.js; the rule path must set it too —
 		// pipeline.js resolves imports and file facts against arch.repoRoot.
 		arch.repoRoot = repoRoot;
-		stateCache.set(repoRoot, { arch, project: createTsProject(repoRoot), repoFiles: listRepoFiles(repoRoot, DEFAULT_EXTS, DEFAULT_IGNORE_DIRS), dedupe: new Map() });
+		// Scan scope is the TOOL's: its defaults, extended by the rule's options —
+		// never the architecture, which describes code, not how to find it.
+		const exts = [...new Set([...DEFAULT_EXTS, ...(opts.exts ?? [])])];
+		const ignoreDirs = [...new Set([...DEFAULT_IGNORE_DIRS, ...(opts.ignoreDirs ?? [])])];
+		// How alike a folder must be to a declared entity before a "no role"
+		// finding may offer it as a destination. A RULE option, not a fact of the
+		// architecture: the default is 60%.
+		arch.similarity = typeof opts.similarity === "number" ? opts.similarity : DEFAULT_SIMILARITY;
+		stateCache.set(repoRoot, { arch, project: createTsProject(repoRoot), repoFiles: collectFiles(repoRoot, { exts, ignoreDirs }).map((abs) => toRel(repoRoot, abs)), dedupe: new Map() });
 	}
 	return stateCache.get(repoRoot);
 };
@@ -86,6 +68,8 @@ const rule = {
 						properties: {
 							config: { type: "string" },
 							include: { type: "array" },
+							exts: { type: "array" },
+							similarity: { type: "number" },
 							ignoreDirs: { type: "array" },
 							ignores: { type: "array" },
 						},
@@ -105,8 +89,8 @@ const rule = {
 		const rel = path.relative(repoRoot, filePath).split(path.sep).join("/");
 		const { arch, project, repoFiles, dedupe } = getRuleState(repoRoot, opts);
 		// Scan scope (exts, ignore dirs, ignore globs) comes ONLY from the tool:
-		// hardcoded defaults + the ESLint rule options. The architecture yaml must
-		// not carry it — it describes the code, not how to scan it.
+		// its defaults + the ESLint rule options. The architecture yaml must not
+		// carry it — it describes the code, not how to scan it.
 		const ignoreDirs = [...new Set([...DEFAULT_IGNORE_DIRS, ...(opts.ignoreDirs ?? [])])];
 		const ignoreGlobs = opts.ignores ?? [];
 		if (ignoreDirs.some((d) => rel === d || rel.startsWith(`${d}/`))) return {};
@@ -151,4 +135,4 @@ const flatConfig = (architecture, opts = {}) => {
 	return list;
 };
 
-module.exports = { flatConfig, plugin };
+module.exports = {plugin};

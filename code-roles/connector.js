@@ -11,8 +11,8 @@
 //   candidate fact (in place, mutating the array):
 //     • `role` — the candidate's classified role name (first matching
 //       codeRole in YAML order), or null.
-//     • `parentRole` — the role of the candidate this one is nested in
-//       (matched by `parentName`), or null.
+//     • `parentRole` — the role of the piece this one sits in (the `piece` of
+//       its `location`), or null.
 //     • Each entry in `calls` gets `targetRole` — the role of the function
 //       the call targets (matched by callee name), or null.
 //
@@ -20,12 +20,14 @@
 //   - `role: { equals: "action" }`  →  candidate IS an action
 //   - `parentRole: { equals: "orchestrator" }`  →  nested in an orchestrator
 //   - `calls: { some: { targetRole: { equals: "pureFunction" } } }`
-//   - `kind: { in: ["storeModel"] }`  →  in a node's `kind` field
+//   - `kind: { own: { is: { in: ["storeModel"] } } }`  →  a node's own kind
 //
 // This is the same mechanism used by classifyRoles — the connector does not
 // re-implement infer matching; it reuses `matches` from the queries engine.
 
-const { matches } = require("../utils/queries");
+const { matches } = require("../entities/queries");
+const { rolesAtPath } = require("../nodes/homes");
+const { deepestMatch } = require("../nodes/tree");
 
 // The role of the candidate a call targets. A call's `action` is the called
 // member name (`doX` in `store.doX()`) or the full text for a bare-identifier
@@ -34,9 +36,14 @@ const { matches } = require("../utils/queries");
 // `toggleLine` candidate. This is the ONLY place call-target role resolution
 // happens; every consumer (assert.js, filters via `calls.some.targetRole`)
 // reads the `targetRole` this attaches.
-const roleOfTarget = (call, nameToRole) => {
+const roleOfTarget = (call, nameToRole, arch) => {
 	const hit = (call?.action && nameToRole.get(call.action)) ?? (call?.origin && nameToRole.get(call.origin)) ?? null;
-	return hit?.role ?? null;
+	if (hit) return hit.role ?? null;
+	// Declared in another file: the role is whatever the architecture declares
+	// at the target's location — ONE implementation of that question, in
+	// nodes/homes.js. Ambiguous location → null, never a guess.
+	const at = call?.target?.path ? rolesAtPath(arch, call.target.path) : [];
+	return at.length === 1 ? at[0] : null;
 };
 
 // Classify each candidate's role (first matching codeRole in YAML order wins)
@@ -55,20 +62,40 @@ const enrichWithRoles = (candidates, codeRoles, arch) => {
 		if (c.name) nameToRole.set(c.name, c);
 	}
 	const scope = arch ? { arch } : undefined;
+
+	// Role assignment and call-target resolution feed each other: a role may be
+	// inferred from the roles of the callees (`calls.some.targetRole`), while a
+	// callee's role is what `targetRole` resolves to. Two phases per pass, and
+	// passes repeat until nothing changes (roles move in one direction only —
+	// an earlier entry in the YAML order can newly match, never un-match).
+	const assignRoles = () => {
+		let changed = false;
+		for (const c of candidates) {
+			const before = c.role ?? null;
+			let role = null;
+			for (const [name, def] of roleDefs) {
+				if (def?.infer && matches(c, def.infer, scope)) {
+					role = name;
+					break;
+				}
+			}
+			if (role !== before) changed = true;
+			c.role = role;
+		}
+		return changed;
+	};
+
+	assignRoles();
 	for (const c of candidates) {
-		c.role = null;
-		for (const [name, def] of roleDefs) {
-			if (def?.infer && matches(c, def.infer, scope)) {
-				c.role = name;
-				break;
-			}
+		c.parentRole = c.location?.piece ? (nameToRole.get(c.location.piece)?.role ?? null) : null;
+	}
+
+	for (let pass = 0; pass < 4; pass += 1) {
+		for (const c of candidates) {
+			if (!Array.isArray(c.calls)) continue;
+			for (const call of c.calls) call.targetRole = roleOfTarget(call, nameToRole, arch);
 		}
-		c.parentRole = c.parentName ? (nameToRole.get(c.parentName)?.role ?? null) : null;
-		if (Array.isArray(c.calls)) {
-			for (const call of c.calls) {
-				call.targetRole = roleOfTarget(call, nameToRole);
-			}
-		}
+		if (!assignRoles()) break;
 	}
 	return candidates;
 };
