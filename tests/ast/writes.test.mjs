@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { describe, expect, it, beforeAll } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createTsProject, loadSourceFile, collectFileFacts, collectCandidates, importNameModules } = require("../../ast");
+const { createTsProject, loadSourceFile, collectFileFacts, collectCandidates, importNameModules } = require("../../entities/ast");
 
 // A WRITE is not only `=`: any method that changes the value it is called on is
 // one too — `push`, `splice`, `set`, `appendLine`, `sort` … The one thing that

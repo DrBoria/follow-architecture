@@ -19,8 +19,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { DEFAULT_SIMILARITY, compilePattern } = require("../utils/pattern");
-const { loadSourceFile, importNameModules, collectCandidates } = require("../ast");
+const { loadSourceFile, importNameModules, collectCandidates } = require("../entities/ast");
 const { classifyRoles } = require("../code-roles/classify");
+const { segmentsOf } = require("../entities/location");
 
 // The roles a node's children declare: a child carries them, or names another
 // node that does.
@@ -36,12 +37,11 @@ const criteriaOf = (arch, node) => [...new Set((node.children ?? []).flatMap((c)
 
 // The files that belong to this folder: the entity's children live at the top of
 // it and one level down (`actions/x.ts`).
-const filesIn = (folder, repoFiles) =>
-	(repoFiles ?? []).filter((file) => {
-		if (!file.startsWith(`${folder}/`)) return false;
+const filesIn = (folder, repoFiles) => {
+	const depth = segmentsOf(folder).length;
 
-		return file.slice(folder.length + 1).split("/").length <= 2;
-	});
+	return (repoFiles ?? []).filter((file) => file.startsWith(`${folder}/`) && segmentsOf(file).length - depth <= 2);
+};
 
 // The roles the folder's code actually has. Parsed and classified once per file
 // per run — the folder is judged by the same facts its own findings come from.

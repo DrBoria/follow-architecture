@@ -32,9 +32,15 @@ const collectFiles = (repoRoot, { exts, ignoreDirs, ignoreGlobs }) => {
 			}
 		}
 	};
-	walk(repoRoot);
+		walk(repoRoot);
 
-	return out;
+		// SORTED, always: `readdirSync` returns whatever order the filesystem
+		// happens to keep (hashed on btrfs, insertion on ext4), so without this the
+		// same tree produced a different report from one machine — or one run — to
+		// the next. The order is not cosmetic: a `dedupeBy` finding is reported for
+		// the FIRST file that reaches a place, so an unstable list moves the
+		// finding between files.
+		return out.sort();
 };
 
 module.exports = { collectFiles };

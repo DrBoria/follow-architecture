@@ -20,7 +20,7 @@
 // root IS (`function` / `object` / `method`), `segments` says how it is
 // spelled (`getRoot`, `self.root`, `parent.get`).
 
-const { parseWhere, toList } = require("../utils/where");
+const { parseWhere, toList } = require("../entities/location");
 const { FACT_KINDS } = require("../entities/kinds");
 
 // Keys of a role that describe the role itself, not an action on it.
@@ -50,21 +50,24 @@ const normalizeScopeAccessor = (e) => {
 	return { scope, segments };
 };
 
-// Everything an action may carry, and how each key is read. This map IS the
+// Every key an action may carry, with the ONE reader for it. `where` and
+// `except` are the same list shape — who may, and when that allowance stops —
+// so both point at the same parser instead of a copy of it. This map IS the
 // validation: a key that is not here is a rule the YAML believes it made, and
-// is rejected by name. There is no second list to keep in sync.
+// is rejected by name.
 const ACTION_KEYS = {
-	where: (spec, roles) => parseWhere(spec.where, roles),
+	where: parseWhere,
+	except: parseWhere,
 	// `of: call` — this action is checked against the `call` fact class. Lets a
 	// design use its own vocabulary (emit / subscribe / dispatch / provide)
 	// without the engine knowing that vocabulary.
-	of: (spec) => {
-		if (!FACT_KINDS.includes(spec.of)) {
-			throw new Error(`codeRoles: action says \`of: ${spec.of}\` — the fact layer produces ${FACT_KINDS.join(" | ")}`);
+	of: (value) => {
+		if (!FACT_KINDS.includes(value)) {
+			throw new Error(`codeRoles: action says \`of: ${value}\` — the fact layer produces ${FACT_KINDS.join(" | ")}`);
 		}
-		return String(spec.of);
+		return String(value);
 	},
-	scopeAccess: (spec) => (toList(spec.scopeAccess).length ? toList(spec.scopeAccess).map(normalizeScopeAccessor) : null),
+	scopeAccess: (value) => (toList(value).length ? toList(value).map(normalizeScopeAccessor) : null),
 };
 
 const normalizeAction = (name, spec, roles) => {
@@ -73,11 +76,11 @@ const normalizeAction = (name, spec, roles) => {
 			throw new Error(`codeRoles: action \`${name}.${key}\` is not an action key — use ${Object.keys(ACTION_KEYS).join(", ")}`);
 		}
 	}
-	const out = { where: parseWhere(spec.where, roles) };
-	if (spec.of != null) out.of = ACTION_KEYS.of(spec);
-	if (spec.scopeAccess != null) {
-		const scopeAccess = ACTION_KEYS.scopeAccess(spec);
-		if (scopeAccess) out.scopeAccess = scopeAccess;
+	const out = {};
+	for (const [key, read] of Object.entries(ACTION_KEYS)) {
+		if (spec[key] == null) continue;
+		const value = read(spec[key], roles);
+		if (value != null) out[key] = value;
 	}
 	return out;
 };

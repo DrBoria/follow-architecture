@@ -70,8 +70,8 @@ const Body = styled.main`
 
 const TABS = [
 	{ id: "summary", label: "Overview" },
-	{ id: "tree", label: "Architecture tree" },
-	{ id: "graph", label: "Graph & code roles" },
+	{ id: "tree", label: "Nodes" },
+	{ id: "graph", label: "Code Roles" },
 	{ id: "invariants", label: "Invariants" },
 	{ id: "findings", label: "Findings" },
 ];

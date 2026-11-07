@@ -14,7 +14,7 @@
 // true" is the same filter under `not:` — the language already has it, so a
 // second key would be a second way to say one thing.
 
-const { parseWhere, matchesWhere, toList } = require("../utils/where");
+const { parseWhere, matchesWhere, toList } = require("../entities/location");
 
 // Every key an invariant may carry — anything else is a declaration the config
 // believes it made, so it fails loudly instead of doing nothing.

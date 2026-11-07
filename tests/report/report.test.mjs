@@ -24,20 +24,37 @@ describe("renderReport", () => {
 		expect(text).not.toContain("## Orphan files");
 	});
 
-	it("groups findings by file and renders fixes", () => {
-		const f = (file, message, fix) => ({ file, message, fix, node: "n", rule: "r", key: file, pos: { line: 1, column: 1 } });
+	it("groups findings by code role and then by the piece, naming the place", () => {
+		// A file is not what a finding is ABOUT: two actions in one file are two
+		// answers about one role, and a reader looking for "what is wrong with this
+		// action" must not have to open a file name first.
+		const f = (file, message, fix, what, role) => ({ file, message, fix, what, role, node: "n", rule: "r", key: `role:${role}`, pos: { line: 1, column: 1 } });
 		const text = renderReport(
 			[
-				f("a.ts", "bad a", "fix a"),
-				f("b.ts", "bad b", null),
+				f("a.ts", "bad a", "fix a", "openAction", "action"),
+				f("a.ts", "bad a2", null, "closeAction", "action"),
+				f("b.ts", "bad b", null, "helper", "pureFunction"),
 			],
 			"/repo"
 		);
-		expect(text).toContain("### `a.ts`");
-		expect(text).toContain("### `b.ts`");
+		// Role headings, one per role, pieces under them.
+		expect(text).toContain("### `action` code");
+		expect(text).toContain("### `pureFunction` code");
+		expect(text).not.toContain("### `a.ts`");
+		expect(text).toContain("#### `openAction` — `a.ts:1`");
+		expect(text).toContain("#### `closeAction` — `a.ts:1`");
 		expect(text).toContain("bad a");
-		expect(text).toContain("**Fix.**");
+		// A repair is a LIST, never one sentence: the format says how many options
+		// the reader has, so a single "Delete it." cannot hide the alternatives.
+		expect(text).toContain("**Fix** — 1 option");
 		expect(text).toContain("fix a");
+	});
+
+	it("keeps findings that belong to no role in their own section", () => {
+		const f = (file, message) => ({ file, message, fix: null, what: null, role: null, node: "n", rule: "r", key: file, pos: { line: 2, column: 1 } });
+		const text = renderReport([f("a.ts", "no role here")], "/repo");
+		expect(text).toContain("### node `n`");
+		expect(text).toContain("#### `a.ts` — `a.ts:2`");
 	});
 });
 

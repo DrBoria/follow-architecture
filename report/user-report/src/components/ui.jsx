@@ -31,8 +31,12 @@ export const Title = styled.h2`
 	font-weight: 650;
 	margin: 0;
 	letter-spacing: 0.2px;
-	flex: none;
-	white-space: nowrap;
+	/* A role title lists every action it declares, so it is long: it shrinks and
+	   wraps inside the panel head instead of running past the panel edge. */
+	flex: 1 1 auto;
+	min-width: 0;
+	white-space: normal;
+	overflow-wrap: anywhere;
 `;
 
 export const Subtle = styled.span`
@@ -59,17 +63,19 @@ const BadgeBox = styled.span`
 	font-weight: 600;
 	letter-spacing: 0.2px;
 	/* A badge holding a path may be longer than the column; it wraps instead of
-	   being cut at the panel edge. */
-	white-space: normal;
-	overflow-wrap: anywhere;
+	   being cut at the panel edge — but in a ROW (a tree line) wrapping means one
+	   letter per line, so the nowrap flag keeps it whole instead. */
+	white-space: ${(p) => (p.$nowrap ? "nowrap" : "normal")};
+	overflow-wrap: ${(p) => (p.$nowrap ? "normal" : "anywhere")};
+	flex: ${(p) => (p.$nowrap ? "none" : "initial")};
 	max-width: 100%;
 	color: ${(p) => p.$color ?? p.theme.color.textDim};
 	background: ${(p) => (p.$color ? `${p.$color}1f` : `${p.theme.color.border}88`)};
 	border: 1px solid ${(p) => (p.$color ? `${p.$color}55` : p.theme.color.border)};
 `;
 
-export const Badge = ({ children, color, ...rest }) => (
-	<BadgeBox $color={color} {...rest}>
+export const Badge = ({ children, color, nowrap, ...rest }) => (
+	<BadgeBox $color={color} $nowrap={nowrap} {...rest}>
 		{children}
 	</BadgeBox>
 );

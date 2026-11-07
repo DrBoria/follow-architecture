@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 import { describe, it, expect } from "vitest";
-const { buildTree, deepestMatch, checkTree } = require("../../nodes/tree");
+const { buildTree, deepestMatch, checkTree } = require("../../entities/tree");
 const { buildArchitecture } = require("../../main");
 
 const archOf = (nodes) => ({ nodes: buildTree(nodes), invariants: [] });

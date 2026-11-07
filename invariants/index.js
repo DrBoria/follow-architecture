@@ -16,7 +16,8 @@
 
 const { matches, innerFilterOf, hitOf } = require("../entities/queries");
 const { fileVars } = require("./name");
-const { entryKey, checkWhere } = require("../utils/where");
+const { resolveLocation } = require("../entities/location");
+const { entryKey, checkWhere } = require("../entities/location");
 const { fieldOf } = require("../utils/field");
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -74,6 +75,12 @@ const collectScalars = (value, vars, depth = 0) => {
 		if (Array.isArray(v)) {
 			const named = v.filter((x) => isObj(x) && typeof x.name === "string");
 			if (named.length === v.length && named.length) vars[k] = named.map((x) => x.name).join(" → ");
+			// A list of PLAIN strings is its own answer: `references.files` is the set
+			// of files a name is used in, and "move it where it is called" has to say
+			// WHERE — a count cannot name a place. Never overwritten: a count already
+			// collected for a file-level report keeps its meaning.
+			const strings = v.filter((x) => typeof x === "string" && x);
+			if (strings.length === v.length && strings.length && vars[k] == null) vars[k] = strings.join(", ");
 			continue;
 		}
 		if (isObj(v)) collectScalars(v, vars, depth + 1);
@@ -126,9 +133,23 @@ const deduped = (inv, facts, dedupe, ctx) => {
 	return false;
 };
 
-const checkInfer = (inv, ctx, out, findingFrom, dedupe) => {
-	const facts = ctx.facts;
+// A rule's destination, resolved BY THE TREE — one implementation, in
+// `entities/location.js`, shared with the `location:` filter. `fix.location`
+// (`{ role }` / `{ node }` / a glob, or a list of alternatives) becomes the place
+// and the box for THIS file, so the sentence and the picture get one place.
+const resolvePlace = (report, ctx) => {
+	if (!report || !report.fix?.location) return report;
+	const hit = resolveLocation(ctx.arch, report.fix.location, ctx.rel);
+	if (!hit?.node) return report;
+	return { ...report, to: [hit.node], place: hit.path };
+};
+
+const checkInfer = (inv, ctx, out, findingFrom, dedupe) => {	const facts = ctx.facts;
 	if (!facts) return;
+	// ONE finding per PIECE per rule. A piece can answer two `infer` entries of
+	// the same rule (a `const` holding an arrow is the variable and the function),
+	// and the reader does not need the same sentence twice with the same name.
+	const spoken = new Set();
 	for (const entry of inv.infer) {
 		const filter = filterOf(entry);
 		// A filter is asked of the FILE first, then of every candidate in it. A
@@ -141,7 +162,10 @@ const checkInfer = (inv, ctx, out, findingFrom, dedupe) => {
 		// architecture to resolve a node slug to paths. Without it the operator
 		// silently answered "no match" — a rule written with `location` simply never
 		// fired, which reads exactly like "nothing is wrong".
-		const scope = { arch: ctx.arch, fileRel: ctx.rel };
+		// The scope IS the file's facts (plus the tree), so a rule can compare one fact
+		// with another — `$location.fileName` against `location.files` — instead of a
+		// second copy of the same data being collected for it.
+		const scope = { ...facts, arch: ctx.arch, fileRel: ctx.rel };
 		const fileAnswer = matches(facts, filter, scope);
 		if (!fileAnswer) {
 			for (const c of facts.candidates ?? []) {
@@ -159,8 +183,20 @@ const checkInfer = (inv, ctx, out, findingFrom, dedupe) => {
 					// a list of everything the function ever touched.
 					const written = [...new Set(listHit(c.assignments ?? [], filter, "assignments", scope).map((a) => a.value ?? a.target).filter(Boolean))];
 					if (written.length) vars.assignments = written.join(", ");
-					out.push(findingFrom({ key: "infer", report: entry.report ?? inv.report ?? null, line: c.lines?.[0] ?? 1 }, "invariant", ctx.rel, `invariant:${inv.id}:infer`, vars));
-					break;
+					// ONE FINDING PER MATCHED PIECE, not per rule and file: two factories in
+					// one file are two things to delete, and the second one used to
+					// disappear because the key was the rule's. The key carries the
+					// candidate's name so the dedupe map can hold both.
+					const who = c.name ?? c.location?.piece ?? "?";
+					if (spoken.has(who)) continue;
+					spoken.add(who);
+					// A rule may name its destination by the ROLE the code belongs to
+					// (`to: [{ role: storeModel }]`, the same vocabulary as any other
+					// place). The tree turns that into a box and a path FOR THIS FILE —
+					// a rule never spells a folder, so it cannot name one that does not
+					// exist.
+					const report = resolvePlace(entry.report ?? inv.report ?? null, ctx);
+					out.push(findingFrom({ key: "infer", report, line: c.lines?.[0] ?? 1 }, "invariant", ctx.rel, `invariant:${inv.id}:infer:${who}`, vars));
 				}
 			}
 		} else if (!deduped(inv, facts, dedupe, ctx)) {
@@ -173,7 +209,11 @@ const checkInfer = (inv, ctx, out, findingFrom, dedupe) => {
 			const violations = violationsOf(facts, filter, scope);
 			if (violations.length) vars.violations = violations.join(", ");
 			listFactVars(vars, facts, filter, scope);
-			out.push(findingFrom({ key: "infer", report: entry.report ?? inv.report ?? null }, "invariant", ctx.rel, `invariant:${inv.id}:infer`, vars));
+			// The same tree-resolved destination as the candidate branch: which
+			// pattern noticed the problem (a file-level filter or one piece) must not
+			// decide whether the sentence and the picture agree.
+			const stated = resolvePlace(entry.report ?? inv.report ?? null, ctx);
+			out.push(findingFrom({ key: "infer", report: stated }, "invariant", ctx.rel, `invariant:${inv.id}:infer`, vars));
 		}
 	}
 };

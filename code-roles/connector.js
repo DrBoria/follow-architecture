@@ -26,8 +26,8 @@
 // re-implement infer matching; it reuses `matches` from the queries engine.
 
 const { matches } = require("../entities/queries");
-const { rolesAtPath } = require("../nodes/homes");
-const { deepestMatch } = require("../nodes/tree");
+const { rolesAtPath } = require("../entities/location");
+const { deepestMatch } = require("../entities/tree");
 
 // The role of the candidate a call targets. A call's `action` is the called
 // member name (`doX` in `store.doX()`) or the full text for a bare-identifier

@@ -44,13 +44,15 @@ describe("the fact layer's contract", () => {
 			const edges = EDGE_FACTS[kind](facts);
 			expect(edges.length).toBeGreaterThan(0);
 			for (const e of edges) {
-				// `{ path, line, what, piece, role }` is the edge every consumer reads:
-				// a role belongs to the PIECE of code that makes the relation
-				// (`getHost` is a view, `storeSettings` in the same file is an action),
-				// so the edge carries both. `call` names the callee as well — "which
-				// function of that module" is what tells a declared store accessor
-				// from any other reach.
-				const allowed = kind === "call" ? ["action", "line", "path", "piece", "role", "what"] : ["line", "path", "piece", "role", "what"];
+			// `{ path, line, what, piece, role, fact }` is the edge every consumer
+			// reads: a role belongs to the PIECE of code that makes the relation
+			// (`getHost` is a view, `storeSettings` in the same file is an action),
+			// so the edge carries both. `call` names the callee as well — "which
+			// function of that module" is what tells a declared store accessor
+			// from any other reach. `fact` is the same observation with NO words in
+			// it: `report/errorTypes/phrases.js` writes the sentence, so the AST
+			// layer cannot disagree with the report about what happened.
+			const allowed = kind === "call" ? ["action", "fact", "line", "path", "piece", "role", "what"] : ["fact", "line", "path", "piece", "role", "what"];
 				expect(Object.keys(e).sort()).toEqual(allowed);
 				expect(typeof e.path).toBe("string");
 				expect(typeof e.line).toBe("number");

@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { describe, expect, it, beforeAll } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createTsProject, loadSourceFile, collectFileFacts, collectCandidates, importNameModules } = require("../../ast");
+const { createTsProject, loadSourceFile, collectFileFacts, collectCandidates, importNameModules } = require("../../entities/ast");
 
 let project;
 
@@ -71,6 +71,24 @@ describe("ast — candidate facts", () => {
 		expect(bare.module).toBe("a/helper.ts");
 		const member = c.calls.find((x) => x.action === "doX");
 		expect(member.origin).toBe("store");
+	});
+
+	// A chain broken across lines is the SAME callee. The facts are compared to
+	// what the architecture writes (`origin: { equals: "t.model" }`), so the
+	// source formatting must not leak into the value: an origin read as
+	// "t\n\t.model" made every multi-line `t.model(…)` miss its role.
+	it("origin does not depend on how the chain is laid out", () => {
+		const oneLine = factsFor("const store = t.model('X', {});\n").facts.candidates.find((c) => c.kind.own.is === "VariableDeclaration");
+		const wrapped = factsFor("const store = t\n\t.model('X', {})\n\t.volatile(() => ({}));\n").facts.candidates.find((c) => c.kind.own.is === "VariableDeclaration");
+		expect(wrapped.kind.initializer.origin).toBe("t.model");
+		expect(wrapped.kind.initializer.origin).toBe(oneLine.kind.initializer.origin);
+	});
+
+	it("call origin and action do not depend on the layout either", () => {
+		const { facts } = factsFor("const run = () => t\n\t.model('X', {});\n");
+		const c = fn(facts, "run");
+		expect(c.calls[0].origin).toBe("t");
+		expect(c.calls[0].action).toBe("model");
 	});
 
 	it("marks local assignments", () => {
@@ -238,7 +256,7 @@ const folderFactsFor = (files, rel) => {
 describe("ast — path fact", () => {
 	it("splits dir and fileName (basename without extension)", () => {
 		const { facts } = factsFor("const a = 1;\n", "apps/backend/utils/host-types.ts");
-		expect(facts.location.dir).toBe("apps/backend/utils");
+		expect(facts.location.segments.slice(0, -1).join("/")).toBe("apps/backend/utils");
 		expect(facts.location.fileName).toBe("host-types");
 	});
 
@@ -251,8 +269,11 @@ describe("ast — path fact", () => {
 			},
 			"a/text-mate.ts",
 		);
-		expect(facts.location.files).toEqual(["other", "text-mate"]);
+		// Every entry is a PLACE: the name is read off it, the count off the list.
+		expect(facts.location.files.map((f) => f.fileName)).toEqual(["other", "text-mate"]);
 		expect(facts.location.files).toHaveLength(2);
+		// A file one folder deeper is not a neighbour.
+		expect(facts.location.files.map((f) => f.path)).toEqual(["a/other.ts", "a/text-mate.ts"]);
 	});
 });
 
@@ -314,7 +335,7 @@ describe("ast.collectFileFacts — before classification", () => {
 		expect(early.roles).toEqual([]);
 		// Everything a role may want to filter on is already there.
 		expect(early.imports.map((i) => i.source)).toEqual(["vscode"]);
-		expect(early.location.dir).toBe("a");
+		expect(early.location.segments).toEqual(["a", "x.ts"]);
 		expect(early.lines).toEqual([1, 2, 3]);
 		expect(early.roles).toEqual([]);
 	});
@@ -325,7 +346,7 @@ describe("ast — one fact per question", () => {
 	// already answered by an action (`call`, `assign`, `declare`, `export`) has no
 	// second field. Pinned so the old duplicates cannot creep back.
 	// `file` and `role` are attached by the pipeline (classification), not here.
-	const CANDIDATE_FACTS = ["assignments", "calls", "exported", "kind", "lines", "location", "mutable", "name", "parameters", "returns"];
+	const CANDIDATE_FACTS = ["assignments", "branches", "calls", "exported", "implementations", "kind", "lines", "location", "mutable", "name", "parameters", "references", "returns"];
 
 	it("a candidate is location + lines + parameters + actions, and nothing else", () => {
 		const { facts } = factsFor("export const run = (state: { x: number }) => { state.x = 1; return 1; };\n");
@@ -340,6 +361,29 @@ describe("ast — one fact per question", () => {
 		for (const gone of ["line", "path", "piece", "descendants", "parentName", "calledBy", "modifiers", "declarationToken", "bodyStatements", "mutatedParams", "callModules", "writes", "mutations"]) {
 			expect(c).not.toHaveProperty(gone);
 		}
+	});
+
+	it("a comment is a candidate: place, lines, kind and its text", () => {
+		const { facts } = factsFor("/** @param {number} a why a */\nexport function run(a: number) {\n\t/* inside */\n\treturn 1;\n}\n");
+		const comments = facts.candidates.filter((c) => c.text != null);
+
+		// The three forms the language has, each with the lines it covers — a
+		// comment that spans lines is one comment, and `lines` says so.
+		expect(comments.map((c) => [c.kind.own.is, c.lines])).toEqual([
+			["JSDocComment", [1]],
+			["MultiLineCommentTrivia", [3]],
+		]);
+		// Every fact a candidate has, plus what only a comment has: its text.
+		expect(Object.keys(comments[0]).sort()).toEqual([...CANDIDATE_FACTS, "text"].sort());
+		// A doc block ABOVE a declaration is not inside it (it starts before the
+		// declaration does); the block in the body is, and `piece` names the function.
+		expect(comments.map((c) => c.location.piece)).toEqual([null, "run"]);
+		// The INSIDE of a doc block is the parser's own subtree — the tags are nodes
+		// like any other, told apart by `is`, so no rule needs a list of tag names.
+		expect(comments[0].kind.descendants.map((d) => [d.is, d.name]).filter(([is]) => is === "JSDocParameterTag")).toEqual([["JSDocParameterTag", "a"]]);
+		// A plain block comment is a node with nothing inside it — an empty subtree,
+		// not a missing one.
+		expect(comments[1].kind.descendants).toEqual([]);
 	});
 
 	it("a write carries its own classification: mutate, assign, or nothing", () => {
@@ -369,8 +413,21 @@ describe("ast — one fact per question", () => {
 
 	it("everything about the file's place in the tree is `location`, and the count is files.length", () => {
 		const facts = folderFactsFor({ "a/x.ts": "", "a/y.ts": "", "a/deep/z.ts": "" }, "a/x.ts");
-		expect(Object.keys(facts.location).sort()).toEqual(["dir", "fileName", "files", "path"]);
+		// The place is described the way the DOM describes a node: its own names, its
+		// parts, its folder, its parent, its neighbours and its position among them —
+		// one fact, nothing beside it.
+		// Only what cannot be read off the list: the path, its segments, the
+		// name's extensions and words, and the neighbours (each a place).
+		expect(Object.keys(facts.location).sort()).toEqual([
+			"exts", "fileName", "files", "path", "segments", "siblings", "words",
+		]);
 		expect(facts.location.path).toBe("a/x.ts");
-		expect(facts.location.files).toEqual(["x", "y"]);
+		expect(facts.location.segments).toEqual(["a", "x.ts"]);
+		// The folder is a segment, not a stored string; the count is `length`.
+		expect(facts.location.segments.at(-1)).toBe("x.ts");
+		expect(facts.location.files.map((f) => f.path)).toEqual(["a/x.ts", "a/y.ts"]);
+		expect(facts.location.siblings.map((f) => f.fileName)).toEqual(["y"]);
+		expect(facts.location.fileName).toBe("x");
+		expect(facts.location.exts).toEqual([".ts"]);
 	});
 });

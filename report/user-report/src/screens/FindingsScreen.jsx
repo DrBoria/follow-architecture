@@ -1,13 +1,15 @@
 import React, { useDeferredValue, useMemo, useState } from "react";
 import styled from "styled-components";
-import { Badge, Panel, PanelHead, SearchBox, Subtle, Title } from "../components/ui";
-import { categoryColor } from "../theme";
-import { AccessGraph } from "../components/AccessGraph";
+import { Panel, Subtle } from "../components/ui";
 import { kindColors } from "../theme";
-import { BeforeAfter } from "../components/BeforeAfter";
-import { nodeLabel } from "../utils/format";
+import { FindingDetail } from "../components/findings/FindingDetail";
+import { FindingList } from "../components/findings/FindingList";
 import { navigate } from "../utils/router";
 
+// Two columns: the list (navigation) and the selected finding (its message, its
+// rule, its repairs, and the picture of the place). This screen only decides
+// WHICH finding is on screen: the wording comes from `report/errorTypes/` and
+// the picture from `graph/decision.js`.
 const Layout = styled.div`
 	display: grid;
 	grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.4fr);
@@ -15,89 +17,6 @@ const Layout = styled.div`
 	align-items: start;
 	@media (max-width: 1050px) { grid-template-columns: 1fr; }
 `;
-
-const Log = styled.div`
-	max-height: 620px;
-	overflow: auto;
-	display: grid;
-	gap: 3px;
-`;
-
-const Entry = styled.button`
-	display: grid;
-	gap: 2px;
-	text-align: left;
-	width: 100%;
-	/* The row is placed in a fixed-height slot by the virtual list; it must never
-	   grow past it, or tall rows draw on top of the next one. */
-	height: 100%;
-	box-sizing: border-box;
-	overflow: hidden;
-	padding: 8px 10px;
-	border-radius: ${(p) => p.theme.radius.sm};
-	border: 1px solid ${(p) => (p.$active ? "#6ea8fe88" : "transparent")};
-	background: ${(p) => (p.$active ? "rgba(110,168,254,0.12)" : "transparent")};
-	color: ${(p) => p.theme.color.text};
-	cursor: pointer;
-	&:hover { background: ${(p) => (p.$active ? "rgba(110,168,254,0.16)" : "rgba(255,255,255,0.04)")}; }
-`;
-
-const Line = styled.div`
-	font-family: ${(p) => p.theme.font.mono};
-	font-size: 11px;
-	line-height: 14px;
-	color: ${(p) => p.theme.color.textFaint};
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-`;
-
-const Block = styled.div`
-	margin-top: 10px;
-	padding: 10px 12px;
-	border-radius: ${(p) => p.theme.radius.sm};
-	background: ${(p) => p.$bg ?? "rgba(255,255,255,0.025)"};
-	font-size: 13px;
-	line-height: 1.6;
-`;
-
-const Label = styled.div`
-	font-size: 10.5px;
-	text-transform: uppercase;
-	letter-spacing: 0.7px;
-	color: ${(p) => p.theme.color.textFaint};
-	margin-bottom: 4px;
-`;
-
-// A list row is memoised: filtering re-renders the screen on every keystroke, and
-// without this every row is rebuilt even though only `active` ever changes.
-const FindingRow = React.memo(function FindingRow({ f, at, active, onOpen }) {
-	return (
-		<Entry $active={active} onClick={() => onOpen(f, at)}>
-			{/* One line, always: the badge keeps its width and the title ellipsises.
-			    Wrapping either of them makes the row taller than its slot. */}
-			<div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap", lineHeight: "18px" }}>
-				<Badge color={categoryColor(f.category)} style={{ flexShrink: 0, whiteSpace: "nowrap", lineHeight: "14px" }}>
-					{f.category}
-				</Badge>
-				<span style={{ flex: "1 1 auto", minWidth: 0, fontSize: 12.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.title}</span>
-			</div>
-			<Line>
-				{f.file}:{f.line}
-			</Line>
-		</Entry>
-	);
-});
-
-// A row is two fixed-height lines, so the list can be WINDOWED: only the rows in
-// the viewport (+ a little slack) are in the DOM. Rendering 200 rows on every
-// keystroke was seconds of work; this keeps the cost constant no matter how many
-// findings match. A row measures 8 (padding) + 20 (badge/title) + 2 (gap) + 14
-// (location) + 8 (padding) + 2 (borders) ≈ 54px, so the slot is 54px; a shorter
-// slot makes the rows draw on top of each other.
-const ROW_H = 54;
-const OVERSCAN = 6;
-const VIEWPORT = 640;
 
 export const FindingsScreen = ({ data, params }) => {
 	const [query, setQuery] = useState("");
@@ -158,27 +77,11 @@ export const FindingsScreen = ({ data, params }) => {
 	// Which slice of the list is on screen. `scrollTop` is the container's own
 	// position; it resets whenever the filtered list changes, so the reader never
 	// lands in the middle of a new result.
-	const [scrollTop, setScrollTop] = useState(0);
-	// The graph is the most expensive thing on this screen (a layout over every role
-	// and rule). Drawing it for the selected finding made each keystroke pay for it,
-	// so it is drawn only when asked for.
-	const [showGraph, setShowGraph] = useState(false);
-	const first = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
-	const count = Math.ceil(VIEWPORT / ROW_H) + OVERSCAN * 2;
-	const start = Math.min(first, Math.max(0, rows.length - count));
-	const end = Math.min(rows.length, start + count);
-	const visibleRows = rows.slice(start, end);
-	const onListScroll = React.useCallback((e) => setScrollTop(e.currentTarget.scrollTop), []);
-	React.useEffect(() => setScrollTop(0), [deferredQuery, invariantFilter, category]);
+	// The picture is the fastest way to SEE what broke, so it is drawn by default.
+	const [showGraph, setShowGraph] = useState(true);
 
 	const current = filtered[selectedIndex] ?? null;
 	const rule = current?.invariant ? data.invariants.find((i) => i.id === current.invariant) ?? null : null;
-	// Props for the graph are memoised: a new array/object on every render busts
-	// AccessGraph's own memo, and its layout is the most expensive thing on screen.
-	const graphEdges = useMemo(
-		() => data.access.edges.filter((e) => e.from === current?.ownerNode || e.to === current?.ownerNode),
-		[data.access.edges, current?.ownerNode],
-	);
 	const graphKinds = useMemo(() => kindColors(data.access.kinds), [data.access.kinds]);
 
 	const openFinding = React.useCallback(
@@ -189,99 +92,27 @@ export const FindingsScreen = ({ data, params }) => {
 
 	return (
 		<Layout>
-			<Panel>
-				<PanelHead>
-					<Title>Findings</Title>
-					<Subtle>{filtered.length}</Subtle>
-				</PanelHead>
-				<SearchBox value={query} onChange={setQuery} placeholder="Search findings…" />
-				<div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-					{invariantFilter ? (
-						<Badge color="#56c8a8" onClick={clearInvariant} style={{ cursor: "pointer" }}>
-							{invariantFilter} ✕
-						</Badge>
-					) : (
-						<>
-							<Badge color={category === "all" ? "#6ea8fe" : undefined} onClick={() => setCategory("all")} style={{ cursor: "pointer" }}>
-								all {data.findings.length}
-							</Badge>
-							{data.groups.byCategory.map((c) => (
-								<Badge key={c.key} color={category === c.key ? categoryColor(c.key) : undefined} onClick={() => setCategory(c.key)} style={{ cursor: "pointer" }}>
-									{c.key} {c.count}
-								</Badge>
-							))}
-						</>
-					)}
-				</div>
-				<Log data-testid="findings-list" style={{ marginTop: 10, maxHeight: VIEWPORT, overflowY: "auto" }} onScroll={onListScroll}>
-					{/* Rows are POSITIONED, not spaced with growing divs: spacers change the
-					    scroll height as you scroll, which re-anchors the container and makes
-					    `onScroll` fight the layout in a loop. One fixed-height box, rows
-					    absolutely placed inside it — the height never changes. */}
-					<div style={{ position: "relative", height: rows.length * ROW_H }}>
-						{/* The key MUST be unique per row. `f.key` is the RULE that fired, and a
-						    rule fires on hundreds of findings — duplicate keys made React keep the
-						    previous rows on screen and hand a click to the wrong one. */}
-						{visibleRows.map(({ f, i, at }) => (
-							<div key={`${i}:${f.file}:${f.line}:${at}`} style={{ position: "absolute", top: i * ROW_H, left: 0, right: 0, height: ROW_H }}>
-								<FindingRow f={f} at={at} active={i === selectedIndex} onOpen={openFinding} />
-							</div>
-						))}
-					</div>
-					{!filtered.length ? <Subtle>nothing matches this filter</Subtle> : null}
-				</Log>
-			</Panel>
-
+			<FindingList
+				data={data}
+				rows={rows}
+				selectedIndex={selectedIndex}
+				openFinding={openFinding}
+				query={query}
+				onQuery={setQuery}
+				category={category}
+				onCategory={setCategory}
+				invariantFilter={invariantFilter}
+				onClearInvariant={clearInvariant}
+			/>
 			{current ? (
-				<div data-testid="finding-detail" style={{ display: "grid", gap: 16 }}>
-					<Panel>
-						<PanelHead>
-							<Title>{current.title}</Title>
-							<Badge color={categoryColor(current.category)}>{current.category}</Badge>
-							{current.ownerPaths?.length ? <Badge color="#6ea8fe">{nodeLabel({ paths: current.ownerPaths }, 2)}</Badge> : null}
-						</PanelHead>
-						<div style={{ fontSize: 13, color: "#c3ccd9" }}>{current.message}</div>
-						<div style={{ marginTop: 12 }}>
-							<BeforeAfter plan={current.plan} file={current.file} />
-						</div>
-						{rule ? (
-							<Block>
-								<Label>rule as declared — {rule.id}</Label>
-								<div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-									{(rule.infer[0]?.conditions ?? []).map((c, i) => (
-										<Badge key={i} color="#56c8a8">
-											{c}
-										</Badge>
-									))}
-								</div>
-							</Block>
-						) : null}
-						{current.fix ? (
-							<Block $bg="rgba(74,222,128,0.06)">
-								<Label>how to fix</Label>
-								{current.fix}
-							</Block>
-						) : null}
-					</Panel>
-
-					<Panel>
-						<PanelHead>
-							<Title>Where it sits</Title>
-							<Subtle
-								as="button"
-								onClick={() => setShowGraph((v) => !v)}
-								style={{ cursor: "pointer", background: "none", border: "none", color: "#6ea8fe", font: "inherit", padding: 0 }}
-							>
-								{showGraph ? "hide graph" : "show graph"}
-							</Subtle>
-						</PanelHead>
-						{showGraph ? (
-							<AccessGraph nodes={data.nodes} edges={graphEdges} kindColors={graphKinds} focus={current.ownerNode ?? null} height={220} />
-						) : (
-							<Subtle>{current.ownerNode ? `node \`${current.ownerNode}\`` : "no declared node"} — the graph is drawn on demand: laying out every role for every finding cost seconds per keystroke.</Subtle>
-						)}
-					</Panel>
-				</div>
+				<FindingDetail
+					current={current}
+					rule={rule}
+					nodes={data.nodes}
+					graphKinds={graphKinds}
+					showGraph={showGraph}
+					onToggleGraph={() => setShowGraph((v) => !v)}
+				/>
 			) : (
 				<Panel>
 					<Subtle>Select a finding on the left.</Subtle>

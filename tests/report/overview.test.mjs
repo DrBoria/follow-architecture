@@ -7,7 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { loadArchitecture } = require("../../main");
-const { createTsProject } = require("../../ast");
+const { createTsProject } = require("../../entities/ast");
 const { collectOverviewData, renderOverview } = require("../../report/user-report");
 const { describeCondition } = require("../../report/user-report/data/invariants");
 
@@ -126,19 +126,47 @@ describe("collectOverviewData", () => {
 				message,
 				fix: "move it",
 				pos: { line: 1, column: 1 },
-				// The engine, not the report, decides what was violated.
-				data: { violations: [{ kind: "import", targetNode: "feature-store", line: 1 }] },
+				// The engine, not the report, decides what was violated — and WHO may
+				// do it travels with the verdict, so nothing is evaluated twice.
+				data: {
+					violations: [
+						{
+							kind: "import",
+							targetNode: "feature-store",
+							line: 1,
+							token: { code: "relation.forbidden", why: { code: "allowed", roles: ["pureFunction"], targetNode: "feature-store" } },
+						},
+					],
+				},
 			},
 		]);
 		const finding = data.findings[0];
 		expect(finding.boundary).toBeTruthy();
 		expect(finding.boundary.ownerNode).toBe("src");
 		expect(finding.boundary.targetNode).toBe("feature-store");
-		expect(finding.boundary.allowed.map((a) => (a.type === "role" ? a.role : a.value))).toContain("pureFunction");
+		// The list is the engine's own array — the report does not recompute it.
+		expect(finding.boundary.allowed).toEqual(["pureFunction"]);
 		expect(finding.boundary.summary).toContain("not on that list");
 		// The title is the finding's OWN first sentence — the report invents no
 		// vocabulary of its own for a relation.
 		expect(finding.title.startsWith("node `feature` contains extra functionality")).toBe(true);
+	});
+
+	it("does not re-derive who may reach a node when the engine sent no verdict", () => {
+		const data = collect([
+			{
+				file: "src/other.ts",
+				infer: "finally-follow-architecture",
+				key: "k",
+				dedupeKey: "k",
+				message: "m",
+				pos: { line: 1, column: 1 },
+				data: { violations: [{ kind: "import", targetNode: "feature-store", line: 1 }] },
+			},
+		]);
+		// No token → no list. Inventing one from the architecture would be the
+		// second evaluation this report no longer does.
+		expect(data.findings[0].boundary.allowed).toEqual([]);
 	});
 
 	it("derives titles from configured ids instead of project vocabulary", () => {
@@ -174,7 +202,7 @@ describe("describeCondition", () => {
 			"role ≠ action",
 		]);
 		expect(describeCondition({ kind: { descendants: { any: { is: { equals: "ClassDeclaration" } } } } })).toEqual([
-			"kind.descendants.any.is = ClassDeclaration",
+			"kind.descendants[*].is = ClassDeclaration",
 		]);
 	});
 });

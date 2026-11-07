@@ -7,6 +7,10 @@ node_modules
 # Build Outputs
 build
 dist
+# …except the overview's bundler: it is SOURCE (it compiles `report/user-report/src`
+# on first use and caches the result in os.tmpdir()), so it must ship with the
+# package — a published copy without it fails on `--overview`.
+!report/user-report/build/
 
 
 bun.lock

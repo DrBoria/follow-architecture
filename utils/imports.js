@@ -92,4 +92,4 @@ const resolveImport = (sf, source, repoRoot, aliases, repoFiles) => {
 	return rel;
 };
 
-module.exports = { resolveImport, toRel };
+module.exports = { resolveImport, toRel, pathsOf };

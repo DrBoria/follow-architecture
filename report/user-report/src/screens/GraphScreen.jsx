@@ -66,6 +66,11 @@ const Scroll = styled.div`
 	overflow: auto;
 	display: grid;
 	gap: 2px;
+	/* On a large screen the list gets the room the page has: the roles are the
+	   navigation, and a 300px window over them is a scrollbar for nothing. */
+	@media (min-width: 1200px) {
+		max-height: 620px;
+	}
 `;
 
 const Bar = styled.div`
@@ -148,7 +153,8 @@ export const GraphScreen = ({ data, params }) => {
 	const setKind = (k) => navigate("graph", { ...(roleSlug ? { role: roleSlug } : {}), ...(k !== "all" ? { kind: k } : {}), ...(focus ? { focus } : {}) });
 	const setFocus = (slug) => navigate("graph", { ...(roleSlug ? { role: roleSlug } : {}), ...(kind !== "all" ? { kind } : {}), ...(slug ? { focus: slug } : {}) });
 
-	const declared = kinds.length ? kinds.join(" · ") : "no declared boundary";
+	// The canvas is twice as tall on a wide screen — the graph is the point of the
+	// screen, and a 280px window shows a picture the reader has to zoom into.
 
 	return (
 		<>
@@ -172,12 +178,33 @@ export const GraphScreen = ({ data, params }) => {
 					</Scroll>
 				</Panel>
 
+				{/* Where the selected role may be declared: it belongs with the role
+				    list, not in the dashboard of answers. */}
+				{role?.homes?.length ? (
+					<Panel>
+						<PanelHead>
+							<Title>May Live In</Title>
+						</PanelHead>
+						{role.homes.map((h) => {
+							// A folder whose name IS its path (`packages/vscode-extension`) would
+							// print the same string twice and read as two different homes.
+							const label = nodeLabel(h, 2);
+							const path = h.paths?.join(" | ") ?? "";
+							return (
+								<div key={h.slug} style={{ fontSize: 12.5, fontFamily: "monospace", overflowWrap: "anywhere", marginBottom: 4 }}>
+									<span style={{ color: "#6ea8fe" }}>{label || path}</span>{" "}
+									{path && path !== label ? <span style={{ color: "#6b7788" }}>{path}</span> : null}
+								</div>
+							);
+						})}
+					</Panel>
+				) : null}
 			</Cell>
 
 			<Cell>
 			<Panel style={{ minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
 				<PanelHead>
-					<Title>{role ? `\`${role.slug}\` — ${declared}` : "Architecture graph"}</Title>
+					<Title>Graph View</Title>
 					<Badge color="#8b9bb4">
 						{plural(new Set(edges.flatMap((e) => [e.from, e.to])).size, "role")} · {plural(edges.length, "rule")}
 					</Badge>
@@ -226,7 +253,7 @@ export const GraphScreen = ({ data, params }) => {
 					))}
 				</Bar>
 
-				<AccessGraph nodes={roleGraphNodes} edges={edges} kindColors={colors} focus={focus} onFocus={setFocus} showAll={showAll} height={280} />
+								<AccessGraph nodes={roleGraphNodes} edges={edges} kindColors={colors} focus={focus} onFocus={setFocus} showAll={showAll} height={280} growOnWide />
 				<Subtle style={{ display: "block", marginTop: 8 }}>
 					{"an arrow points from the code that is imported or used INTO the code that imports or uses it: “left ──import──▶ right” = right imports left — hover for the exact sentence"}
 				</Subtle>

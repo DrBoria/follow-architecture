@@ -4,7 +4,8 @@
 // file lands in and how many findings it carries. The UI renders this next to
 // the declared architecture so "declared" and "actual" can be compared.
 
-const { deepestMatch } = require("../../../nodes/tree");
+const { deepestMatch } = require("../../../entities/tree");
+const { parentOf, segmentsOf } = require("../../../entities/location");
 
 const emptyDir = (name, path) => ({ name, path, type: "dir", nodeSlug: null, children: [], files: 0, findings: 0 });
 
@@ -17,21 +18,21 @@ const buildFileTree = ({ files, arch, findings }) => {
 
 	const ensureDir = (dirPath) => {
 		if (dirs.has(dirPath)) return dirs.get(dirPath);
-		const parentPath = dirPath.includes("/") ? dirPath.slice(0, dirPath.lastIndexOf("/")) : "";
+		const parentPath = parentOf(dirPath);
 		const parent = ensureDir(parentPath);
-		const node = emptyDir(dirPath.split("/").pop(), dirPath);
+		const node = emptyDir(segmentsOf(dirPath).at(-1) ?? "", dirPath);
 		parent.children.push(node);
 		dirs.set(dirPath, node);
 		return node;
 	};
 
 	for (const rel of [...files].sort()) {
-		const dirPath = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+		const dirPath = parentOf(rel);
 		const parent = ensureDir(dirPath);
 		const hit = deepestMatch(rel, arch);
 		const count = findingCount.get(rel) ?? 0;
 		parent.children.push({
-			name: rel.split("/").pop(),
+			name: segmentsOf(rel).at(-1),
 			path: rel,
 			type: "file",
 			nodeSlug: hit?.node?.slug ?? null,

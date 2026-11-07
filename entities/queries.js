@@ -16,8 +16,14 @@
 // shorthand: `{ kind: { own: { is: { in: [...] } } } }`, never `{ kind: { in: [...] } }`.
 //
 // Scalar operators: equals, not, lt, lte, gt, gte, in, notIn, contains,
-//   startsWith, endsWith, isSet, setEquals, globMatches
-// List operators (list value only): length, every, any, none, where
+//   startsWith, endsWith, isSet, matches
+// List operators (list value only): length, at, every, any, none, where
+//   length — the count, then a filter on that number: `{ length: { gt: 2 } }`.
+//   at     — ONE element by index, negative counting from the end, then a filter
+//            on THAT element: `{ segments: { at: { index: -2, equals: "web" } } }`.
+//            Anything derivable from a list is asked this way — a count is
+//            `length`, "the last one" is `at: -1` — so a fact never stores a
+//            second copy of what the list already says.
 // Location:
 //   `location` — the item's `path` (or the item itself when it is a string)
 //   matched against a location entry: a glob string, { node: "slug" },
@@ -34,6 +40,7 @@
 // invariant `when` gate uses, so every place in the plugin speaks one language.
 
 const { compilePattern } = require("../utils/pattern");
+const { matchesLocation } = require("./location");
 const { fieldOf } = require("../utils/field");
 
 const isList = (v) => Array.isArray(v);
@@ -41,7 +48,7 @@ const isObj = (v) => v !== null && typeof v === "object" && !isList(v);
 
 // Operators that only make sense on a list value. `or` is NOT here — it is
 // a composition op that applies to any value (see matchScalar).
-const LIST_OPS = new Set(["length", "every", "any", "none", "where"]);
+const LIST_OPS = new Set(["length", "at", "every", "any", "none", "where"]);
 
 // Operators that COMPOSE filters instead of addressing a fact. The matcher
 // reads this list, and so does anything that must look THROUGH a filter without
@@ -53,9 +60,9 @@ const COMPOSITION_OPS = new Set(["and", "or", "xor", "not"]);
 // treated as a field of the item: { name: { equals: "x" } } → item.name.
 const KNOWN_OPS = new Set([
 	"equals", "not", "lt", "lte", "gt", "gte", "in", "notIn",
-	"contains", "startsWith", "endsWith", "isSet", "setEquals", "globMatches",
-	"length", "every", "any", "none", "where", "or", "and", "xor", "not",
-	"isNull", "isEmpty", "mode",
+	"contains", "startsWith", "endsWith", "isSet", "matches",
+	"length", "at", "every", "any", "none", "where", "or", "and", "xor", "not",
+	"isNull", "isEmpty",
 	"location",
 ]);
 
@@ -68,25 +75,19 @@ const resolveValue = (expected, scope) => {
 	return expected;
 };
 
+// `matches` — the string against the project's pattern language (`utils/pattern`):
+// `*` is any characters but `/`, `**` crosses folders, `{kebab-case}` is a naming
+// convention. Everything that matches a NAME or a PATH goes through this one
+// operator, so there is no second pattern dialect to learn.
 const globRe = (glob) => compilePattern(String(glob)).re;
 
 // --- Scalar operators -------------------------------------------------------
 
-// Case-insensitive comparison, Keystone-style: `{ contains: "Ab", mode:
-// "insensitive" }` — `mode` is read from the FILTER, so it never becomes part
-// of the value being compared.
-const insensitive = (filter) => filter?.mode === "insensitive";
-
-const matchScalar = (value, op, expected, scope, filter) => {
+const matchScalar = (value, op, expected, scope) => {
 	const exp = resolveValue(expected, scope);
-	const ci = insensitive(filter) && typeof value === "string" && typeof exp === "string";
-	const eq = (a, b) => (ci ? String(a).toLowerCase() === String(b).toLowerCase() : a === b);
 	switch (op) {
 		case "equals":
-			return ci ? eq(value, exp) : value === exp;
-		case "mode":
-			// A modifier of the sibling operators, never a test on its own.
-			return true;
+			return value === exp;
 		case "isNull":
 			return exp === true ? value === null : value !== null;
 		case "isEmpty":
@@ -113,51 +114,26 @@ const matchScalar = (value, op, expected, scope, filter) => {
 		case "notIn":
 			return isList(exp) && !exp.includes(value);
 		case "contains":
-			if (typeof value === "string") return ci ? String(value).toLowerCase().includes(String(exp).toLowerCase()) : value.includes(String(exp));
+			if (typeof value === "string") return value.includes(String(exp));
 			if (isList(value)) return value.includes(exp);
 			return false;
 		case "startsWith":
-			return typeof value === "string" && (ci ? value.toLowerCase().startsWith(String(exp).toLowerCase()) : value.startsWith(String(exp)));
+			return typeof value === "string" && value.startsWith(String(exp));
 		case "endsWith":
-			return typeof value === "string" && (ci ? value.toLowerCase().endsWith(String(exp).toLowerCase()) : value.endsWith(String(exp)));
+			return typeof value === "string" && value.endsWith(String(exp));
 		case "isSet":
 			if (exp === true) return value !== undefined && value !== null;
 			if (exp === false) return value === undefined || value === null;
 			return false;
-		case "setEquals":
-			if (!isList(value) || !isList(exp)) return false;
-			if (value.length !== exp.length) return false;
-			return value.every((v) => exp.includes(v));
-		case "globMatches":
+		case "matches":
 			return typeof value === "string" && globRe(exp).test(value);
 		case "location": {
-			// ONE place to ask "where is this code?" — a candidate, a file, an edge
-			// and a bare path all answer it the same way.
-			//   { location: "glob" }            the path matched as a glob
-			//   { location: { node: "slug" } }  the path inside that node
-			//   { location: { piece: … } }      a field OF the location itself
-			// Same location-entry interface as `location.allowedFrom`.
-			const loc = value !== null && typeof value === "object" && value.location != null ? value.location : value;
-			const itemPath = typeof loc === "string" ? loc : loc?.path;
-			if (typeof itemPath !== "string") return false;
-			if (typeof exp === "string") {
-				return compilePattern(exp).re.test(itemPath);
-			}
-			if (isObj(exp) && typeof exp.node === "string") {
-				const node = scope?.arch?.nodes?.bySlug?.[exp.node];
-				if (!node) return false;
-				return node.variants.some((v) => v.re.test(itemPath));
-			}
-			// `{ location: { role } }` — the path is one of the places that role is
-			// declared to live in. The same question `where: [{ role }]` asks about a
-			// file, asked about the file a VALUE was declared by: "is the thing this
-			// code writes into a store?" needs the role, not a list of store paths.
-			if (isObj(exp) && typeof exp.role === "string") {
-				return (scope?.arch?.nodes?.roleHomes?.[exp.role] ?? []).some((h) => compilePattern(h.template).re.test(itemPath));
-			}
-			// query form: evaluate the filter against the LOCATION itself, so
-			// `{ location: { piece: { isNull: true } } }` reads "at module scope".
-			return matchFilter(loc, exp, scope);
+			// The place question is answered in ONE module (`entities/location.js`),
+			// shared with the `fix.location` of a repair: `{ location: "glob" }`,
+			// `{ location: { node } }`, `{ location: { role } }`, and a query over the
+			// location itself (`{ piece: { isNull: true } }` — "at module scope").
+			// The query form is passed in, so this engine stays out of that module.
+			return matchesLocation(value, exp, scope, (loc, filter) => matchFilter(loc, filter, scope));
 		}
 		case "or":
 			// Scalar-level OR: passes when ANY sub-filter matches the value.
@@ -200,12 +176,30 @@ const hitOf = (list, sub, scope) => {
 	return inner == null ? [] : list.filter((item) => matchFilter(item, inner, scope));
 };
 
+// `Array.prototype.at` semantics, so a rule reads the same index a program would:
+// `-1` is the last element, `-2` the one before it.
+const at = (list, index) => (index < 0 ? list[list.length + index] : list[index]);
+
 const matchList = (value, op, expected, scope) => {
 	const list = isList(value) ? value : [];
 	switch (op) {
 		case "length":
 			// { length: { gt: 2 } } — a scalar filter on list.length.
 			return matchFilter(list.length, expected, scope);
+		case "at": {
+			// { at: { index: -1, equals: ".ts" } } — the filter runs on ONE element,
+			// so "the last extension is .ts" or "the folder segment is the file's own
+			// name" are plain comparisons. `index` is the only key read here; the rest
+			// of the entry is the filter for the element.
+			const { index, ...by } = isObj(expected) ? expected : { index: expected };
+			if (typeof index !== "number") throw new Error("queries: `at` needs a numeric `index`");
+			const item = at(list, index);
+			// No such element is not a match: `{ at: { index: 5 } }` asks that the
+			// position EXISTS, and an empty filter would otherwise pass on `undefined`.
+			if (item === undefined) return false;
+
+			return matchFilter(item, by, scope);
+		}
 		case "every":
 			return list.every((item) => matchFilter(item, expected, scope));
 		case "any":
@@ -238,7 +232,7 @@ const matchFilter = (item, filter, scope) => {
 			if (!isList(value)) return false;
 			if (!matchList(value, key, expected, scope)) return false;
 		} else if (isOp) {
-			if (!matchScalar(value, key, expected, scope, filter)) return false;
+			if (!matchScalar(value, key, expected, scope)) return false;
 		} else {
 			// Field access: the expected value is itself a filter on the field.
 			// A key with dots is a path into a nested fact (`"path.dir": {...}`

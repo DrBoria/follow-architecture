@@ -5,7 +5,7 @@
 // capture groups; `nodePrefixRe` turns a node path into a prefix matcher.
 // Both live here because they are node-specific, not shared machinery.
 
-const { patternBody, PLACEHOLDER } = require("../utils/pattern");
+const { patternBody, PLACEHOLDER, compilePattern } = require("../utils/pattern");
 
 // What is DIRECTLY inside a folder, and how that compares to what the node
 // declares there. One walk of the file list; every "is this folder an instance of
@@ -55,7 +55,7 @@ const missingRequiredChild = (node, arch, rel, repoFiles, concreteFolder) => {
 // → `(?/apps/backend/([^/]+)$`. This is the question "is this folder one of the
 // places this node declares?", asked about the folder itself, without inventing
 // a file name to stand inside it.
-const nodePathRe = (template) => (template === "." ? /^([^/]+)$/ : new RegExp(`^${patternBody(template).body}$`));
+const nodePathRe = (template) => (template === "." ? /^([^/]+)$/ : compilePattern(template).re);
 
 const nodePrefixRe = (template) => {
 	if (template === ".") return { re: /^([^/]+)(?:\/(.*))?$/, names: [], literalLen: 0, isFile: false };

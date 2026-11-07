@@ -5,8 +5,8 @@
 // role card shows actual matches from this repository with a code snippet.
 
 const path = require("node:path");
-const { loadSourceFile, collectCandidates, collectFileFacts, importNameModules } = require("../../../ast");
-const { labelOf } = require("../../../utils/where");
+const { loadSourceFile, collectCandidates, collectFileFacts, importNameModules } = require("../../../entities/ast");
+const { labelOf } = require("../../../entities/location");
 const { classifyRoles } = require("../../../code-roles/classify");
 const { snippet, readText } = require("./scan");
 
@@ -71,17 +71,26 @@ const buildRoles = ({ arch, files, repoRoot, repoFiles, project, nodes }) => {
 		const found = examples.get(slug) ?? [];
 		// Where code of this role may be declared — read from the NODES whose
 		// children name this role, with the concrete paths they resolve to.
-		const homes = (arch.nodes?.roleHomes?.[slug] ?? []).map((h) => {
+		// ONE row per node: a folder that declares the role twice (once by its own
+		// `role:` and once through a child pattern) is still one place, and listing
+		// it twice made the panel read like two different homes.
+		const homes = [];
+		for (const h of arch.nodes?.roleHomes?.[slug] ?? []) {
 			const node = nodeBySlug.get(h.node);
-			return { slug: h.node, paths: node?.paths ?? [], label: h.template };
-		});
+			const seen = homes.find((x) => x.slug === h.node);
+			if (seen) {
+				if (h.template && !seen.labels.includes(h.template)) seen.labels.push(h.template);
+				continue;
+			}
+			homes.push({ slug: h.node, paths: node?.paths ?? [], label: h.template, labels: h.template ? [h.template] : [] });
+		}
 		return {
 			slug,
 			name: def.name ?? slug,
 			infer: rawDef.infer ?? def.infer ?? null,
 			report: {
-				message: rawDef.report?.message ?? (typeof rawDef.report === "string" ? rawDef.report : null),
-				fix: rawDef.report?.fix ?? null,
+				message: rawDef.report?.description ?? rawDef.report?.message ?? (typeof rawDef.report === "string" ? rawDef.report : null),
+				fix: typeof rawDef.report?.fix === "string" ? rawDef.report.fix : rawDef.report?.fix?.message ?? null,
 			},
 			// What may be DONE with code of this role, and by whom.
 			actions: Object.entries(def.actions ?? {}).map(([kind, action]) => ({

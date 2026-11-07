@@ -65,6 +65,31 @@ const FileLink = styled.span`
 	white-space: nowrap;
 `;
 
+// The same colour-coded action filters as the Code Roles screen: the panel draws
+// one folder's arrows, and "import" alone is often the only one worth looking at.
+const FilterBar = styled.div`
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	flex-wrap: wrap;
+	margin-bottom: 8px;
+`;
+
+const KindButton = styled.button`
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 10px;
+	border-radius: 999px;
+	font-size: 11.5px;
+	font-weight: 600;
+	cursor: pointer;
+	color: ${(p) => p.$color ?? p.theme.color.text};
+	background: ${(p) => (p.$active ? `${p.$color}2e` : `${p.$color}14`)};
+	border: 1px solid ${(p) => (p.$active ? `${p.$color}cc` : `${p.$color}55`)};
+	&:hover { border-color: ${(p) => p.$color}; background: ${(p) => `${p.$color}24`}; }
+`;
+
 export const TreeScreen = ({ data, params }) => {
 	const { nodes, findings, roles, access } = data;
 	const colors = useMemo(() => kindColors(access.kinds), [access.kinds]);
@@ -159,6 +184,25 @@ export const TreeScreen = ({ data, params }) => {
 		return nodes.filter((n) => seen.has(n.slug));
 	}, [localEdges, nodes, node]);
 
+	// The same action filter the Code Roles screen has: one folder's picture is
+	// often only interesting filtered to `import`, `call`, …
+	const [kind, setKind] = useState("all");
+	useEffect(() => setKind("all"), [node?.slug]);
+	const localKinds = useMemo(() => {
+		const out = [];
+		for (const e of localEdges) for (const k of e.kinds ?? [e.kind]) if (!out.includes(k)) out.push(k);
+		return out;
+	}, [localEdges]);
+	const kindCounts = useMemo(() => {
+		const map = new Map();
+		for (const e of localEdges) for (const k of e.kinds ?? [e.kind]) map.set(k, (map.get(k) ?? 0) + 1);
+		return map;
+	}, [localEdges]);
+	const shownEdges = useMemo(
+		() => (kind === "all" ? localEdges : localEdges.filter((e) => (e.kinds ?? [e.kind]).includes(kind))),
+		[localEdges, kind],
+	);
+
 	return (
 		<Layout>
 			<Panel>
@@ -234,7 +278,19 @@ export const TreeScreen = ({ data, params }) => {
 						<Section>
 							<Label>what is imported or used in it, and what it imports or uses</Label>
 							{localEdges.length ? (
-								<AccessGraph nodes={localNodes} edges={localEdges} kindColors={colors} focus={node.slug} height={220} />
+								<>
+									<FilterBar>
+										<KindButton $active={kind === "all"} $color="#d7dee8" onClick={() => setKind("all")}>
+											all {localEdges.length}
+										</KindButton>
+										{localKinds.map((k) => (
+											<KindButton key={k} $active={kind === k} $color={colors[k]} onClick={() => setKind(k)}>
+												{k} {kindCounts.get(k) ?? 0}
+											</KindButton>
+										))}
+									</FilterBar>
+									<AccessGraph nodes={localNodes} edges={shownEdges} kindColors={colors} focus={node.slug} height={220} />
+								</>
 							) : (
 								<Subtle>no action names this folder — nothing is imported or used in it, and it imports or uses nothing.</Subtle>
 							)}

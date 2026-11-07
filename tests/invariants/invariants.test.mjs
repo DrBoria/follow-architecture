@@ -180,6 +180,17 @@ describe("invariants — checks", () => {
 		expect(out[0].vars.basename).toBe("x.ts");
 	});
 
+	it("names a candidate's list of plain strings, not only its length", () => {
+		// A rule that says "move it where it is called" has to be able to SAY where.
+		// `references.files` is a list of places, and a count cannot name one.
+		const inv = { id: "place", infer: [{ references: { files: { length: { equals: 1 } } } }], report: "`{what}` is called from {files} only" };
+		const facts = { lines: 10, candidates: [{ name: "helper", references: { total: 1, outside: 1, files: ["apps/backend/document/controller.ts"] } }] };
+		const out = run(inv, ctxOf("packages/utils/text.ts", facts));
+		expect(out).toHaveLength(1);
+		expect(out[0].vars.what).toBe("helper");
+		expect(out[0].vars.files).toBe("apps/backend/document/controller.ts");
+	});
+
 	it("forbids re-exports: any export with a set `from` (named, namespace, star)", () => {
 		const inv = { id: "no-re-exports", where: ["apps/backend/**/*.ts"], ignore: ["apps/backend/test/**"], infer: [{ exports: { any: { from: { isSet: true } } } }] };
 		// a plain export (no `from`) is fine

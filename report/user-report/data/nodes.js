@@ -7,7 +7,7 @@
 // children are what give a codeRole a home, so they are shown here.
 
 const path = require("node:path");
-const { deepestMatch } = require("../../../nodes/tree");
+const { deepestMatch } = require("../../../entities/tree");
 const { missingRequiredChild } = require("../../../nodes/finally");
 const { lineCount, snippet } = require("./scan");
 
@@ -55,7 +55,7 @@ const buildNodes = ({ arch, files, repoRoot }) => {
 			isFile: Boolean(n.isFile),
 			parents: n.parents.filter(Boolean),
 			children: (raw.children ?? []).map(childName),
-			report: typeof raw.report === "string" ? raw.report : raw.report?.message ?? null,
+			report: typeof raw.report === "string" ? raw.report : raw.report?.description ?? raw.report?.message ?? null,
 			files: owned.slice(0, 40),
 			fileCount: owned.length,
 			lineCount: owned.reduce((sum, rel) => sum + lineCount(path.join(repoRoot, rel)), 0),

@@ -1,22 +1,13 @@
 "use strict";
 
-// Findings enrichment: the raw finding carries a message and a fix. The
-// overview adds the missing context — which node owns the file, which node
-// the message points at, and (for boundary violations) the exact list of
-// nodes/globs allowed to import it. This is what turns
-// "`settings.ts` imports from `grammar/store.ts` — not allowed"
-// into something a human can act on.
 
-const { deepestMatch } = require("../../../nodes/tree");
+// Findings for the overview: resolve facts, ask errorTypes once, sort.
+
+const { deepestMatch } = require("../../../entities/tree");
 const { declaredActions } = require("../../../entities/kinds");
-const { homesOf } = require("../../../nodes/homes");
-const { labelOf } = require("../../../utils/where");
 
 const categoryOf = (rule) => (rule === "invariant" ? "invariant" : rule === "codeRoles" ? "codeRole" : "structure");
 
-// A short label, derived only from what the finding itself carries: the
-// configured step id / role slug / rule name, or the first sentence of the
-// configured report message. No project vocabulary lives here.
 const humanize = (id) =>
 	String(id ?? "")
 		.replace(/[-_]+/g, " ")
@@ -38,11 +29,13 @@ const titleFor = ({ invariant, role, node, rule, message }) => {
 	return humanize(node ?? rule);
 };
 
-// Build the "why this fired" paragraph for boundary violations.
-const boundaryDetail = ({ ownerNode, targetNode, allowed }) => {
+// The boundary panel: WHO may reach the node the relation touched. The list is
+// NOT recomputed here — it is the engine's own verdict (`token.why.roles`), the
+// same array the sentence and the repairs print. One evaluation, three readers.
+const boundaryDetail = ({ ownerNode, targetNode, roles }) => {
 	if (!targetNode) return null;
 	const where = targetNode.paths.join(" | ");
-	const list = (allowed ?? []).map(labelOf);
+	const list = (roles ?? []).filter(Boolean);
 	const ownerPath = ownerNode ? ownerNode.path ?? ownerNode.paths?.[0] ?? "" : "";
 	const ownerText = ownerNode ? `\`${ownerNode.slug}\` (${ownerPath})` : "no declared node";
 	return {
@@ -50,21 +43,9 @@ const boundaryDetail = ({ ownerNode, targetNode, allowed }) => {
 		targetPaths: targetNode.paths,
 		ownerNode: ownerNode?.slug ?? null,
 		ownerPaths: ownerNode ? [ownerNode.path ?? ownerNode.paths?.[0]].filter(Boolean) : [],
-		summary: `\`${targetNode.slug}\` (${where}) may be imported only from: ${list.length ? list.join(", ") : "—"}. This file belongs to ${ownerText}, which is not on that list.`,
-		allowed,
+		summary: `\`${targetNode.slug}\` (${where}) may be reached only from: ${list.length ? list.join(", ") : "—"}. This file belongs to ${ownerText}, which is not on that list.`,
+		allowed: list,
 	};
-};
-
-// The `from` list of the IMPORT action of whichever role owns the target path —
-// found by what the action does (`of:`), never by the key it is written under.
-const boundaryAllowed = (arch, targetNode) => {
-	const byFact = declaredActions(arch);
-	for (const slug of Object.keys(arch?.codeRoles ?? {})) {
-		// The role's homes, asked of the one module that owns them.
-		if (homesOf(arch, slug).some((h) => h.node === targetNode.slug)) return byFact.get("import")?.get(slug)?.where ?? [];
-	}
-
-	return [];
 };
 
 // An action's `from` list, as labels the UI can show.
@@ -79,9 +60,6 @@ const splitImporters = (entries) => {
 	return { nodeSlugs: [...new Set(nodes)], globs: [], roles: [...new Set(roles)] };
 };
 
-// A concrete "before → after" for the UI: where the code sits now, where the
-// architecture says it belongs, and (for boundary hits) the nodes that are
-// actually allowed to import the target.
 const buildPlan = ({ role, ownerNode, destination, targetNode, nodes, arch }) => {
 	const ownerPaths = ownerNode ? [ownerNode.path ?? ownerNode.paths?.[0]].filter(Boolean) : [];
 	// Who may import the target's ROLE — the action lives on the role now.
@@ -97,6 +75,8 @@ const buildPlan = ({ role, ownerNode, destination, targetNode, nodes, arch }) =>
 	};
 };
 
+const { describe } = require("../../errorTypes");
+
 const enrichFindings = ({ findings, arch, nodes }) => {
 	const bySlug = new Map(nodes.map((n) => [n.slug, n]));
 	const byPath = (rel) => deepestMatch(rel, arch)?.node ?? null;
@@ -106,35 +86,86 @@ const enrichFindings = ({ findings, arch, nodes }) => {
 		const dedupeKey = f.dedupeKey ?? f.key ?? "";
 		const role = /^role:([^:]+)/.exec(dedupeKey)?.[1] ?? null;
 		const invariant = /^invariant:([^:]+)/.exec(dedupeKey)?.[1] ?? null;
-		// The engine reports which node was hit and where the code belongs; the first
-		// one is the finding's subject. Never parsed out of the message.
 		const violations = f.data?.violations ?? [];
-		const violation = violations[0] ?? null;
-		const targetNode = violation?.targetNode ? bySlug.get(violation.targetNode) ?? null : null;
+		const violation = violations.find((v) => v.kind && v.targetPath) ?? violations[0] ?? null;
+		const relation = violation?.kind ? violation : null;
+		const targetNode = !relation && violation?.targetNode ? bySlug.get(violation.targetNode) ?? null : null;
+		const plan = buildPlan({
+			role,
+			ownerNode,
+			destination: relation ? null : violation?.destination ? byPath(violation.destination) : null,
+			targetNode,
+			nodes,
+			arch,
+		});
+		if (relation) {
+			plan.relation = {
+				kind: relation.kind,
+				node: relation.targetNode ?? null,
+				paths: [relation.targetPath].filter(Boolean),
+				line: relation.line ?? null,
+			};
+		}
+		const boundaryTarget = targetNode ?? (relation?.targetNode ? bySlug.get(relation.targetNode) ?? null : null);
+		const meta = describe({ finding: f, file: f.file, key: dedupeKey, violation, ownerNode, plan, nodes, arch, invariant });
+		const story = meta.story;
+		if (plan.relation) plan.relation.paths = story.target?.paths ?? [];
+		// The before/after card sits next to the picture: both must say the same
+		// thing. The card is read from the SAME repair the arrows are drawn from —
+		// no type is special-cased, so a new kind of repair cannot forget the card.
+		// A repair may name a PLACE with no box (a home spelled as a template,
+		// `apps/backend/{kebab-case}/store.ts`): the card still names it, the
+		// picture draws nothing, because there is no box to draw.
+		const destination = (meta.options ?? []).find((o) => o.path || o.to?.length);
+		if (!plan.after && destination) {
+			const slug = destination.to?.[0] ?? null;
+			plan.after = { node: slug, paths: [destination.path ?? nodes.find((n) => n.slug === slug)?.paths?.[0]].filter(Boolean) };
+		}
+		// The card says what the REPAIR says. "Delete it" and "nothing moves" are
+		// not two views of one finding — they are two different claims, and the
+		// reader is the one who notices.
+		const repair = destination ?? (meta.options ?? [])[0] ?? null;
+		if (repair) plan.repair = repair;
+		if (!plan.after && repair?.code === "remove") plan.remove = true;
+		const message = meta.message ?? f.message;
+		// The SAME options the picture draws: `{ code, text, to }`.
+		const fixOptions = meta.options;
+		// A finding about ONE declaration is about the FILE it sits in: the card's
+		// "now" is that file, not the folder the node stands for. The graph draws
+		// the same box, and the two used to disagree — a single unused helper
+		// crossed out all 32 files of `packages/utils`.
+		if (f.what && plan.before) plan.before = { ...plan.before, paths: [f.file] };
 
 		return {
 			file: f.file,
 			line: f.pos?.line ?? 1,
+			// WHICH piece the finding is about, when it is about one — the picture draws
+			// the file it sits in, not the whole folder around it.
+			what: f.what ?? null,
 			rule: f.rule,
 			key: f.key,
 			dedupeKey,
 			category: categoryOf(f.rule),
-			title: titleFor({ invariant, role, node: ownerNode?.slug, rule: f.rule, message: f.message }),
-			message: f.message,
-			fix: f.fix,
+				title: titleFor({ invariant, role, node: ownerNode?.slug, rule: f.rule, message }),
+				message,
+				engineMessage: f.message,
+				// A LIST of repairs, cheapest first. Never a single sentence.
+				fixOptions,
+				errorType: meta.type,
+
 			ownerNode: ownerNode?.slug ?? null,
+			// What this folder DECLARES — answers "what is this file for?" without
+			// making the reader open the architecture.
+			nodeRoles: ownerNode?.roles ?? [],
 			ownerPaths: ownerNode ? [ownerNode.path ?? ownerNode.paths?.[0]].filter(Boolean) : [],
 			role,
 			invariant,
 			violation,
-			boundary: targetNode ? boundaryDetail({ ownerNode, targetNode, allowed: boundaryAllowed(arch, targetNode), nodes }) : null,
-			plan: buildPlan({ role, ownerNode, destination: violation?.destination ? byPath(violation.destination) : null, targetNode, nodes, arch }),
+							boundary: boundaryTarget ? boundaryDetail({ ownerNode, targetNode: boundaryTarget, roles: story.actors ?? [] }) : null,
+			plan,
+			story,
 		};
 	});
-	// INVARIANTS FIRST. They describe the shape of the whole tree (a chain nobody
-	// can follow, a re-export that hides an edge); a role or node finding is about
-	// one piece inside it. Reading a hundred "belongs in packages/utils" before the
-	// invariant that says "this tree is unreadable" is the wrong way round.
 	const rank = (f) => (f.category === "invariant" ? 0 : f.category === "codeRole" ? 1 : 2);
 
 	return list.sort((a, b) => rank(a) - rank(b) || a.file.localeCompare(b.file) || a.line - b.line);

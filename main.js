@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pipe, map, filter, flatMap } = require("remeda");
 
-const { buildTree, matchers } = require("./nodes/tree");
+const { buildTree, matchers } = require("./entities/tree");
 const { normalizeCodeRoles } = require("./code-roles/roles");
 const { normalizeInvariant } = require("./invariants/normalize");
 const { normalizeAliases } = require("./aliases");
@@ -12,7 +12,6 @@ const { checkFile } = require("./pipeline");
 const { DEFAULT_EXTS, DEFAULT_IGNORE_DIRS } = require("./utils/pattern");
 const { renderReport } = require("./report/cli-report");
 const { collectOverviewData, writeOverview } = require("./report/user-report");
-const { createTsProject } = require("./ast");
 const { toRel } = require("./utils/imports");
 const { collectFiles } = require("./utils/files");
 const { parseArgs } = require("./args");
@@ -73,18 +72,27 @@ const main = (argv) => {
 	const repoRoot = path.resolve(args.cwd ?? process.cwd());
 	const arch = loadArchitecture(args.config);
 	arch.repoRoot = repoRoot;
-	const project = createTsProject(repoRoot);
 	const shouldCheck = matchers(arch);
 	// Scan scope is the TOOL's: its defaults, extended by `--ext`, never by the
 	// architecture (which describes code, not how to find it).
 	const exts = [...new Set([...DEFAULT_EXTS, ...(args.ext ?? [])])];
 	const ignoreDirs = [...new Set([...DEFAULT_IGNORE_DIRS, ...(args.ignoreDir ?? [])])];
+	// ONE walk: the scan list, the repo file list and the ts-morph project are the
+	// same set of files. `references` asks who uses a name ACROSS files, so a
+	// project holding only the file being checked answers "nobody" — and it cannot
+	// follow a `@scope/…` import either, because the aliases come from the YAML.
+	const scanned = collectFiles(repoRoot, { exts, ignoreDirs, ignoreGlobs: args.ignore ?? [] });
+	// `config.js` owns how a run loads its TypeScript, and it requires THIS module
+	// for `loadArchitecture` — so it is taken here, at call time, when both are
+	// fully evaluated.
+	const { openProject } = require("./config");
+	const project = openProject(repoRoot, scanned, arch);
 	// --files restricts the scan to the given files (agent stop-hooks lint only
 	// changed files); orphans are then computed over that set only.
 	const collected = args.files.length
 		? pipe(args.files, map((rel) => path.resolve(repoRoot, rel)), filter((abs) => fs.existsSync(abs) && fs.statSync(abs).isFile()), map((abs) => ({ abs, rel: toRel(repoRoot, abs) })))
 		: pipe(
-				collectFiles(repoRoot, { exts, ignoreDirs, ignoreGlobs: args.ignore ?? [] }),
+				scanned,
 				map((abs) => ({ abs, rel: toRel(repoRoot, abs) })),
 		  );
 	const all = collected;
@@ -94,7 +102,7 @@ const main = (argv) => {
 	// folder facts), even when `--files` restricts which files are CHECKED —
 	// a stop-hook lints only changed files, but their imports point at the
 	// rest of the repo.
-	const repoFiles = args.files.length ? pipe(collectFiles(repoRoot, { exts, ignoreDirs, ignoreGlobs: args.ignore ?? [] }), map((abs) => toRel(repoRoot, abs))) : pipe(all, map((f) => f.rel));
+	const repoFiles = pipe(scanned, map((abs) => toRel(repoRoot, abs)));
 	const dedupe = new Map();
 	const findings = pipe(files, flatMap((f) => checkFile(f.abs, arch, project, repoFiles, dedupe)));
 

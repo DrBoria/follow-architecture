@@ -5,9 +5,10 @@ import { Badge, Mono, Subtle } from "./ui";
 const Row = styled.div`
 	display: flex;
 	align-items: center;
-	gap: 7px;
+	gap: 5px;
 	padding: 4px 8px 4px ${(p) => 8 + p.$depth * 18}px;
 	border-radius: ${(p) => p.theme.radius.sm};
+	overflow: hidden;
 	cursor: pointer;
 	background: ${(p) => (p.$selected ? "rgba(110,168,254,0.15)" : "transparent")};
 	&:hover { background: ${(p) => (p.$selected ? "rgba(110,168,254,0.2)" : "rgba(255,255,255,0.04)")}; }
@@ -26,35 +27,42 @@ const Name = styled.span`
 	font-family: ${(p) => p.theme.font.mono};
 	font-size: 12.5px;
 	font-weight: 600;
+	white-space: nowrap;
+	min-width: 0;
+	max-width: 52%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	/* The folder NAME is the row: it never shrinks. The role badge next to it is
+	   the thing that gives way (it has its own ellipsis). */
+	flex: 0 0 auto;
 	color: ${(p) => (p.$file ? p.theme.color.text : p.theme.color.accent)};
 `;
 
-const Spacer = styled.span`
-	flex: 1;
-`;
+// The path used to be its own column, and it was the widest thing in the row:
+// rows overflowed and the role badge was clipped. The row is already nested, so
+// the path is a tooltip now.
 
 const Count = styled.span`
 	font-size: 11px;
 	color: ${(p) => p.theme.color.textFaint};
 	font-family: ${(p) => p.theme.font.mono};
+	white-space: nowrap;
+	flex: none;
 `;
 
 // One dot per ACTION the folder takes part in, in the same colour the arrow
 // has on the Graph screen. That is how a reader carries the picture over.
 const Dot = styled.span`
-	width: 7px;
-	height: 7px;
+	width: 6px;
+	height: 6px;
 	border-radius: 50%;
 	background: ${(p) => p.$color};
 	flex: none;
 `;
 
-// A node may hang under several parents (`store.ts` under every feature); each
-// parent gets its own path variant. Show the variant matching the row's parent.
-const pathForParent = (node, parentSlug) => {
-	const i = node.parents.indexOf(parentSlug);
-	return (i >= 0 ? node.paths[i] : node.paths[0]) ?? node.paths[0];
-};
+// At most five dots: seven actions turned the row into a colour strip and left
+// no room for the role name.
+const MAX_DOTS = 5;
 
 export const TreeNode = ({ node, childrenByParent, depth = 0, expanded, onToggle, onSelect, selected, findingCounts = {}, parentSlug = null, kindFlags = {}, colors = {} }) => {
 	const fixCount = findingCounts[node.slug] ?? 0;
@@ -66,6 +74,7 @@ export const TreeNode = ({ node, childrenByParent, depth = 0, expanded, onToggle
 			<Row
 				$depth={depth}
 				$selected={selected === node.slug}
+				title={node.paths?.join(" | ") ?? node.slug}
 				onClick={() => {
 					if (kids.length) onToggle(node.slug);
 					onSelect?.(node.slug);
@@ -73,20 +82,34 @@ export const TreeNode = ({ node, childrenByParent, depth = 0, expanded, onToggle
 			>
 				<Chevron $open={open}>{kids.length ? "▶" : ""}</Chevron>
 				<Name $file={node.isFile}>{node.name}</Name>
-				{(kindFlags[node.slug] ?? []).map((kind) => (
-					<span key={kind} title={`takes part in \`${kind}\``} style={{ display: "inline-flex" }}>
+				{(kindFlags[node.slug] ?? []).slice(0, MAX_DOTS).map((kind) => (
+					<span key={kind} title={`takes part in \`${kind}\``} style={{ display: "inline-flex", flex: "none" }}>
 						<Dot $color={colors[kind]} />
 					</span>
 				))}
-				<Badge color={node.roles?.length ? "#b48ef0" : undefined}>{node.roles?.length ? node.roles.join(" · ") : "structure only"}</Badge>
-				{node.closed ? <Badge color="#fbbf24">closed</Badge> : null}
+				{(kindFlags[node.slug] ?? []).length > MAX_DOTS ? (
+					<span style={{ flex: "none", fontSize: 10, color: "#6b7788" }} title="more actions take part">
+						+{(kindFlags[node.slug] ?? []).length - MAX_DOTS}
+					</span>
+				) : null}
+				<Badge
+					nowrap
+					title={node.roles?.length ? node.roles.join(" · ") : "structure only"}
+					color={node.roles?.length ? "#b48ef0" : undefined}
+					style={{ flex: "0 1 auto", minWidth: 0, maxWidth: 200 }}
+				>
+					{/* The text is its own box so a long role list ellipsizes instead of
+					    widening the row (which pushed a horizontal scrollbar on the tree). */}
+					<span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+						{node.roles?.length ? node.roles.join(" · ") : "structure only"}
+					</span>
+				</Badge>
+				{node.closed ? <Badge nowrap color="#fbbf24">closed</Badge> : null}
 				{node.fileCount ? <Count>{node.fileCount} {node.fileCount === 1 ? "file" : "files"}</Count> : null}
-				{fixCount ? <Badge color="#ff6b6b">{fixCount}</Badge> : null}
-				<Spacer />
-				<Subtle>{pathForParent(node, parentSlug)}</Subtle>
+				{fixCount ? <Badge nowrap color="#ff6b6b">{fixCount}</Badge> : null}
 			</Row>
 			{open
-				? kids
+				? [...kids]
 						.sort((a, b) => a.paths[0].localeCompare(b.paths[0]))
 						.map((kid) => (
 							<TreeNode

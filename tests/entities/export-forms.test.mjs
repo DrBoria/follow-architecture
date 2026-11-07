@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { createTsProject, loadSourceFile, importNameModules, collectCandidates, collectFileFacts } = require("../../ast");
+const { createTsProject, loadSourceFile, importNameModules, collectCandidates, collectFileFacts } = require("../../entities/ast");
 const { EDGE_FACTS } = require("../../entities/kinds");
 
 // `export` is EVERY way code leaves a module — the modern spellings, the legacy

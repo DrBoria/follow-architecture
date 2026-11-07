@@ -25,7 +25,7 @@ const ARCH = JSON.stringify({
 	codeRoles: [
 		{
 			slug: "angularComponent",
-			infer: [{ kind: { own: { is: { equals: "ClassDeclaration" } } } }, { decorators: { any: { name: { equals: "Component" } } } }],
+			infer: [{ kind: { own: { is: { equals: "ClassDeclaration" } } } }, { kind: { decorators: { any: { name: { equals: "Component" } } } } }],
 			actions: {
 				call: { where: [{ role: "angularComponent" }] },
 				// Its own word for it: the AST only knows it as a call.
@@ -53,7 +53,7 @@ const ARCH = JSON.stringify({
 		},
 		{
 			slug: "service",
-			infer: [{ kind: { own: { is: { equals: "ClassDeclaration" } } } }, { decorators: { any: { name: { equals: "Injectable" } } } }],
+			infer: [{ kind: { own: { is: { equals: "ClassDeclaration" } } } }, { kind: { decorators: { any: { name: { equals: "Injectable" } } } } }],
 			actions: {
 				// Only a component or a hook may reach a service. Both halves are
 				// written out because a relation a role does not declare is FORBIDDEN:

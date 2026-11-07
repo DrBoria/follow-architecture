@@ -51,6 +51,11 @@ const Arrow = styled.div`
 `;
 
 // "Structure before → structure after" for one finding.
+//
+// A RELATION finding has no "after": the file stays where it is and only the
+// edge is wrong, so `plan.relation` is rendered as a crossed-out arrow to the
+// piece that was touched. Rendering the engine's move hint as "should live
+// here" sent readers to move a file that was perfectly placed.
 export const BeforeAfter = ({ plan, file }) => {
 	if (!plan) return null;
 	// A plan is not always complete: a cross-cutting finding has neither a
@@ -58,6 +63,7 @@ export const BeforeAfter = ({ plan, file }) => {
 	// paths it covers. Reading `paths[0]` unguarded crashed the whole screen on
 	// exactly those findings.
 	const { before, after, target } = plan;
+	const relation = plan.relation ?? null;
 	const allowedImporters = plan.allowedImporters ?? [];
 	const allowedGlobs = plan.allowedGlobs ?? [];
 
@@ -68,6 +74,24 @@ export const BeforeAfter = ({ plan, file }) => {
 			<Path>{before?.paths?.[0] ?? file}</Path>
 		</Card>
 	);
+
+	// A refused relation: the owner stays, the arrow is crossed out, and the piece
+	// it reached is named as a FILE (that is what the engine saw).
+	if (relation) {
+		return (
+			<div style={{ display: "grid", gap: 8 }}>
+				<Row>
+					{ownerCard}
+					<Arrow $color="#ff6b6b">──✕──▶</Arrow>
+					<Card $color="#fbbf24">
+						<CardTitle>{relation.kind} of this piece — not allowed</CardTitle>
+						<Node $color="#fbbf24">{relation.paths?.[0] ?? relation.node ?? "…"}</Node>
+						<Path>{relation.node ? `belongs to \`${relation.node}\`` : "no declared node"}</Path>
+					</Card>
+				</Row>
+			</div>
+		);
+	}
 
 	// Boundary hit: the fix is not a move, it is "this file may not import that
 	// node". Show the crossing, then who IS allowed.
@@ -117,11 +141,20 @@ export const BeforeAfter = ({ plan, file }) => {
 						<Node $color="#8ce6a8">{nodeLabel({ paths: after.paths }, 2) || after.node}</Node>
 						<Path>{after.paths?.[0] ?? after.node ?? "…"}</Path>
 					</Card>
+				) : plan.remove ? (
+					// The repair says "delete", so the card says "deleted". A card reading
+					// "no destination named — nothing moves" next to a sentence that deletes
+					// the code is the picture contradicting the words.
+					<Card $color="#ff6b6b">
+						<CardTitle>after the fix</CardTitle>
+						<Node $color="#ff8f8f">✕ removed</Node>
+						<Path>{plan.repair?.text ?? "this code goes away"}</Path>
+					</Card>
 				) : (
 					<Card $color="#6b7788">
 						<CardTitle>destination</CardTitle>
-						<Node $color="#95a1b3">in place</Node>
-						<Path>cross-cutting invariant — rewrite, not a move</Path>
+						<Node $color="#95a1b3">none named</Node>
+						<Path>the repair names no place — the code itself has to change</Path>
 					</Card>
 				)}
 			</Row>

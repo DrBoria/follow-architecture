@@ -3,7 +3,6 @@ import styled from "styled-components";
 import { Badge, Subtle } from "./ui";
 import { CodePanel } from "./code-preview/CodePanel";
 import { inferToYaml } from "../generate/infer";
-import { allowedImporters, badWiring, goodWiring } from "../generate/wiring";
 import { describeQuery } from "../utils/describe";
 import { nodeLabel } from "../utils/format";
 
@@ -13,7 +12,11 @@ import { nodeLabel } from "../utils/format";
 // a 340px rail where nothing is readable.
 const Dashboard = styled.div`
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+	/* Dense: a wide card (code, long prose) pulls the next short card up into the
+	   hole it leaves, so the dashboard does not end in a ragged column of
+	   half-empty cards. */
+	grid-auto-flow: dense;
 	gap: 14px;
 	align-items: start;
 	width: 100%;
@@ -31,6 +34,10 @@ const Section = styled.section`
 	min-width: 0;
 	max-width: 100%;
 	box-sizing: border-box;
+	/* The card is as wide as its CONTENT, not as wide as the grid cell: a card
+	   holding three short rows used to be painted as a full-width empty box. */
+	justify-self: start;
+	width: fit-content;
 	/* A card that needs room (code, yaml, a long message) spans two columns when
 	   the grid has them, and collapses to one on a narrow screen. */
 	${(p) => (p.$wide ? "@media (min-width: 700px) { grid-column: span 2; }" : "")}
@@ -43,13 +50,50 @@ const Label = styled.div`
 	color: ${(p) => p.theme.color.textFaint};
 `;
 
+// One boundary, ONE line, and it can never paint outside the card: every part of
+// the row is shrinkable (min-width: 0) and every chip ellipsizes its text, so the
+// sum always fits. The full text stays in the `title` of each chip.
 const Arrow = styled.div`
 	display: flex;
+	flex-wrap: nowrap;
 	align-items: center;
 	gap: 7px;
 	font-family: ${(p) => p.theme.font.mono};
 	font-size: 12px;
-	flex-wrap: wrap;
+	min-width: 0;
+	max-width: 100%;
+
+	/* The acting side is NOT shrunk: a short name like orchestrator is always
+	   readable, and a long list of roles is capped at 45% and ellipsized (its full
+	   text is in the title). The target column takes the rest and ellipsizes. */
+	& > span:first-child {
+		flex: 0 0 auto;
+		min-width: 0;
+		max-width: 45%;
+	}
+`;
+
+// The arrow and its target travel together as flex items (no extra box), so the
+// arrow is drawn right after the acting chip and immediately before the target.
+const Link = styled.span`
+	display: contents;
+`;
+
+const ArrowGlyph = styled.span`
+	flex: none;
+	white-space: nowrap;
+	color: ${(p) => p.theme.color.textDim};
+`;
+
+// The right side may carry several chips (the role itself, a `via` clause, a
+// `checked as` note): one line, each chip ellipsizing on its own.
+const Targets = styled.span`
+	display: flex;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 5px;
+	flex: 1 1 auto;
+	min-width: 0;
 `;
 
 const Chip = styled.span`
@@ -58,15 +102,39 @@ const Chip = styled.span`
 	color: ${(p) => p.$c};
 	border-radius: 6px;
 	padding: 1px 7px;
+	/* One line, ellipsized: a chip never wraps its text and never overflows the
+	   row — the full value is in its title. */
+	min-width: 0;
+	max-width: 100%;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	box-sizing: border-box;
+`;
+
+// The finding message is prose, not a code snippet: set it as a quote with room
+// to breathe, so it does not read as a footnote next to the code cards.
+const Quote = styled.blockquote`
+	margin: 0;
+	padding: 8px 0 8px 12px;
+	border-left: 2px solid ${(p) => p.theme.color.border};
+	color: ${(p) => p.theme.color.text};
+	font-size: 13px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+`;
+
+const Fix = styled.div`
+	font-size: 12.5px;
+	line-height: 1.5;
+	color: #8ce6a8;
+	overflow-wrap: anywhere;
 `;
 
 const codeOf = (example) => (example?.code ? example.code.lines.join("\n") : null);
 
 export const RoleDetail = ({ role, nodes, graph = null, showInfer = true }) => {
 	const example = role.examples?.[0] ?? null;
-	const good = goodWiring(role, nodes);
-	const bad = badWiring(role, nodes);
-	const allowed = allowedImporters(role);
 	const conditions = role.infer ? (Array.isArray(role.infer) ? role.infer : [role.infer]).flatMap(describeQuery) : [];
 	const home = role.homes?.[0] ?? null;
 	// The other half of the boundary: what code of THIS role may reach. The
@@ -130,84 +198,73 @@ export const RoleDetail = ({ role, nodes, graph = null, showInfer = true }) => {
 				<Subtle>no matches in this repository</Subtle>
 			)}
 
-			{good || bad ? (
-				<Section>
-					<Label>how it is wired in</Label>
-					{home ? (
-						<Arrow>
-							<Chip $c="#4ade80">{good ? good.title : "allowed importer"}</Chip>
-							<span style={{ color: "#4ade80" }}>──▶</span>
-							<Chip $c="#8b9bb4">{nodeLabel(home, 2)}</Chip>
-						</Arrow>
-					) : null}
-					{bad ? (
-						<Arrow>
-							<Chip $c="#ff6b6b">{bad.title}</Chip>
-							<span style={{ color: "#ff6b6b" }}>──✕──▶</span>
-							<Chip $c="#fbbf24">{home ? nodeLabel(home, 2) : ""}</Chip>
-						</Arrow>
-					) : null}
-					{allowed.length ? (
-						<Subtle>
-							only these are allowed to import it: <code>{allowed.join(", ")}</code>
-						</Subtle>
-					) : null}
-				</Section>
-			) : null}
-
-			{good ? <CodePanel tone="good" title={`import from ${good.title}`} code={good.code} note={good.note} max="120px" /> : null}
-			{bad ? <CodePanel tone="bad" title={`import from ${bad.title}`} code={bad.code} note={bad.note} max="120px" /> : null}
-
-			{role.actions?.length ? (
-				<Section>
-					<Label>what may be done with this role, and by whom</Label>
-					{role.actions.map((a) => (
-						<Arrow key={a.kind}>
-							<Chip $c="#8b9bb4">{a.from.length ? a.from.join(" | ") : "nobody"}</Chip>
-							<span style={{ color: "#6ea8fe" }}>──{a.kind}──▶</span>
-							{a.of ? <Chip $c="#8b9bb4">checked as {a.of}</Chip> : null}
-							<Chip $c="#f0a35e">{role.slug}</Chip>
-							{a.scopeAccess?.length ? <Chip $c="#56c8a8">via {a.scopeAccess.map((x) => x.segments.join(".")).join(" · ")}</Chip> : null}
-						</Arrow>
-					))}
-				</Section>
-			) : null}
-
 			{outgoing.length ? (
-				<Section>
+				<Section $wide>
 					<Label>what this role's code may do</Label>
 					{outgoing.map((o) => (
 						<Arrow key={o.kind}>
-							<Chip $c="#f0a35e">{role.slug}</Chip>
-							<span style={{ color: "#6ea8fe" }}>──{o.kind}──▶</span>
-							<Chip $c="#8b9bb4">{o.targets.join(" · ")}</Chip>
+							<Chip $c="#f0a35e" title={role.slug}>
+								{role.slug}
+							</Chip>
+							<Link>
+								<ArrowGlyph style={{ color: "#6ea8fe" }}>──{o.kind}──▶</ArrowGlyph>
+								<Targets>
+									<Chip $c="#8b9bb4" title={o.targets.join(" · ")}>
+										{o.targets.join(" · ")}
+									</Chip>
+								</Targets>
+							</Link>
 						</Arrow>
 					))}
+				</Section>
+			) : null}
+
+			{role.actions?.length ? (
+				<Section $wide>
+					<Label>what may be done with this role, and by whom</Label>
+					{role.actions.map((a) => {
+						const from = a.from.length ? a.from.join(" | ") : "nobody";
+						const via = a.scopeAccess?.length ? `via ${a.scopeAccess.map((x) => x.segments.join(".")).join(" · ")}` : null;
+						return (
+							<Arrow key={a.kind}>
+								<Chip $c="#8b9bb4" title={from}>
+									{from}
+								</Chip>
+								<Link>
+									<ArrowGlyph style={{ color: "#6ea8fe" }}>──{a.kind}──▶</ArrowGlyph>
+									<Targets>
+										{a.of ? (
+											<Chip $c="#8b9bb4" title={`checked as ${a.of}`}>
+												checked as {a.of}
+											</Chip>
+										) : null}
+										<Chip $c="#f0a35e" title={role.slug}>
+											{role.slug}
+										</Chip>
+										{via ? (
+											<Chip $c="#56c8a8" title={via}>
+												{via}
+											</Chip>
+										) : null}
+									</Targets>
+								</Link>
+							</Arrow>
+						);
+					})}
 				</Section>
 			) : null}
 
 			{role.report?.message ? (
-				<Section>
+				<Section $wide>
 					<Label>reported when misfiled</Label>
 					{/* The message is a template: `{what}`, `{path}`, `{destination}`. Shown
 					    raw it reads like a bug, so it is filled from the example that is
 					    printed right next to it — the sentence a reader would actually see. */}
-					<div style={{ fontSize: 12.5, color: "#c3ccd9" }}>{fill(role.report.message)}</div>
-					{role.report.fix ? <div style={{ fontSize: 12.5, color: "#8ce6a8" }}>{fill(role.report.fix)}</div> : null}
+					<Quote>{fill(role.report.message)}</Quote>
+					{role.report.fix ? <Fix>→ {fill(role.report.fix)}</Fix> : null}
 				</Section>
 			) : null}
 
-			{role.homes?.length ? (
-				<Section>
-					<Label>may live in</Label>
-					{role.homes.map((h) => (
-						<div key={h.slug} style={{ fontSize: 12, fontFamily: "monospace" }}>
-							<span style={{ color: "#6ea8fe" }}>{nodeLabel(h, 2)}</span>{" "}
-							<span style={{ color: "#6b7788" }}>{h.paths?.join(" | ")}</span>
-						</div>
-					))}
-				</Section>
-			) : null}
 		</Dashboard>
 	);
 };

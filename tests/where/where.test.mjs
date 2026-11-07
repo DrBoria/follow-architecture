@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 import { describe, it, expect } from "vitest";
-const { fillTemplate } = require("../../utils/where");
+const { fillTemplate } = require("../../entities/location");
 
 // A destination is a TEMPLATE from the tree resolved against the file that has
 // to move. It has to name a real place: a concrete file keeps its own name, a

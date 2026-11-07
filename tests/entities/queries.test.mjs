@@ -39,15 +39,28 @@ describe("queries.matches — scalar ops", () => {
 		expect(matches({ name: "" }, { name: { isSet: true } })).toBe(true);
 	});
 
-	it("setEquals — order-insensitive exact set", () => {
-		expect(matches({ roles: ["a", "b"] }, { roles: { setEquals: ["b", "a"] } })).toBe(true);
-		expect(matches({ roles: ["a", "b"] }, { roles: { setEquals: ["a"] } })).toBe(false);
+	it("at — one element by index, negative from the end", () => {
+		const item = { segments: ["apps", "backend", "store.ts"], exts: [".spec", ".ts"] };
+		expect(matches(item, { segments: { at: { index: -1, equals: "store.ts" } } })).toBe(true);
+		expect(matches(item, { segments: { at: { index: -2, equals: "backend" } } })).toBe(true);
+		expect(matches(item, { segments: { at: { index: 0, equals: "apps" } } })).toBe(true);
+		// `-1` on the extensions is the last one: no `ext` field to keep in sync.
+		expect(matches(item, { exts: { at: { index: -1, equals: ".ts" } } })).toBe(true);
+		expect(matches(item, { exts: { at: { index: -2, equals: ".spec" } } })).toBe(true);
+		// A position that does not exist is not a match, even with no filter.
+		expect(matches(item, { segments: { at: { index: 5 } } })).toBe(false);
+		expect(matches(item, { exts: { at: { index: 9, equals: ".ts" } } })).toBe(false);
 	});
 
-	it("globMatches", () => {
-		expect(matches({ name: "decorated-text.ts" }, { name: { globMatches: "{kebab-case}.ts" } })).toBe(true);
-		expect(matches({ name: "decorated_text.ts" }, { name: { globMatches: "{kebab-case}.ts" } })).toBe(false);
-		expect(matches({ name: "store.ts" }, { name: { globMatches: "store.ts" } })).toBe(true);
+	it("length — the count, for anything that is a list", () => {
+		expect(matches({ segments: ["a", "b"] }, { segments: { length: { equals: 2 } } })).toBe(true);
+		expect(matches({ segments: ["a"] }, { segments: { length: { gt: 1 } } })).toBe(false);
+	});
+
+	it("matches", () => {
+		expect(matches({ name: "decorated-text.ts" }, { name: { matches: "{kebab-case}.ts" } })).toBe(true);
+		expect(matches({ name: "decorated_text.ts" }, { name: { matches: "{kebab-case}.ts" } })).toBe(false);
+		expect(matches({ name: "store.ts" }, { name: { matches: "store.ts" } })).toBe(true);
 	});
 
 	it("or — any branch matches", () => {
@@ -67,6 +80,22 @@ describe("queries.matches — scalar ops", () => {
 		// the item's field to scope.kind.
 		expect(matches({ kind: "arrowFunction" }, { kind: { equals: "$kind" } }, { kind: "arrowFunction" })).toBe(true);
 		expect(matches({ kind: "arrowFunction" }, { kind: { equals: "$kind" } }, { kind: "function" })).toBe(false);
+	});
+
+	it("a $path collects one field ACROSS a list, and still reads length and indexes", () => {
+		const scope = {
+			parameters: [{ name: "a" }, { name: "b" }],
+			kind: { descendants: [{ is: "JSDoc", tags: [{ arg: "a" }] }, { is: "Block" }] },
+		};
+		// `.name` lands on the array, so it names the field in every element…
+		expect(matches({ name: "a" }, { name: { in: "$parameters.name" } }, scope)).toBe(true);
+		expect(matches({ name: "c" }, { name: { in: "$parameters.name" } }, scope)).toBe(false);
+		// …including through a nested list, skipping the entries that do not have it
+		expect(matches("a", { equals: "$kind.descendants.tags.arg" }, scope)).toBe(false);
+		expect(matches(["a"], { length: { gt: 0 } }, { list: ["a"] })).toBe(true);
+		// a segment the array itself answers is read, not spread
+		expect(matches(2, { equals: "$parameters.length" }, scope)).toBe(true);
+		expect(matches({ name: "a" }, { name: { in: "$parameters.length" } }, scope)).toBe(false);
 	});
 
 	it("a list op on a non-list value fails gracefully (no throw)", () => {

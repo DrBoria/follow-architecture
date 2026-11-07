@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 const { buildArchitecture } = require("../../main");
 const { similarNodes } = require("../../nodes/similar");
-const { createTsProject } = require("../../ast");
+const { createTsProject } = require("../../entities/ast");
 
 // Similarity is measured in ROLES, never in file names: two folders holding the
 // same kind of code score the same whatever the files are called. A folder can

@@ -14,6 +14,9 @@
 // action may import feature A's store, never feature B's. At template level
 // that is an edge only when both sides live under the same placeholders.
 
+const { segmentsOf } = require("../../../entities/location");
+const { deepestMatch } = require("../../../entities/tree");
+
 // Two node templates address the same instance when their DIRECTORY segments
 // agree position by position: literals must be equal, a placeholder on both
 // sides lines up (it will resolve to the same value), and a placeholder on one
@@ -24,8 +27,8 @@ const sameInstance = (a, b) => {
 	// rule the engine applies (utils/where.js), otherwise the picture would show
 	// fewer edges than the linter enforces.
 	const isVar = (s) => /^\{[^}]+\}$/.test(s);
-	const dirs = (node) => node.paths[0].split("/").slice(0, -1);
-	if (isVar(b.paths[0].split("/").pop())) return false;
+	const dirs = (node) => segmentsOf(node.paths[0]).slice(0, -1);
+	if (isVar(segmentsOf(b.paths[0]).at(-1))) return false;
 	if (!dirs(b).some(isVar)) return true;
 	const da = dirs(a);
 	const db = dirs(b);
@@ -55,8 +58,9 @@ const buildAccessGraph = ({ arch, nodes, findings }) => {
 	// see — and then any name the config invented (`emit: { of: call }`). A kind no
 	// role mentions is still listed: a rule nobody wrote is a rule nobody may use,
 	// so "0 edges" is a fact about the architecture, not a missing button.
-	const { accessorLabel, labelOf } = require("../../../utils/where");
+	const { accessorLabel, labelOf } = require("../../../entities/location");
 const { FACT_KINDS } = require("../../../entities/kinds");
+
 	const kinds = [...FACT_KINDS];
 	const seenKind = new Set(kinds);
 	for (const def of Object.values(roles)) {
@@ -170,9 +174,26 @@ const { FACT_KINDS } = require("../../../entities/kinds");
 
 	// What is actually broken: a finding that names both the folder the file
 	// sits in and the folder it reached. Same colour language as the edges.
+	// The target of a REFUSED relation is a ROLE, so it is resolved to the node
+	// its path lands in; a role name is not a folder and would match nothing.
+	const slugOfPath = (path) => (path ? (deepestMatch(String(path), arch)?.node?.slug ?? null) : null);
 	const violations = (findings ?? [])
 		.filter((f) => f.violation && f.ownerNode && f.violation.targetNode)
-		.map((f) => ({ kind: f.violation.kind, from: f.ownerNode, to: f.violation.targetNode, file: f.file, line: f.line, title: f.title }));
+		.map((f) => ({
+			kind: f.violation.kind,
+			from: f.ownerNode,
+			to: slugOfPath(f.violation.targetPath) ?? f.violation.targetNode,
+			role: f.violation.targetNode,
+			file: f.file,
+			line: f.line,
+			title: f.title,
+		}));
+	// The arrows that ARE the finding: same pair, same action.
+	const brokenBy = new Map();
+	for (const v of violations) {
+		const key = `${v.kind}|${v.from}|${v.to}`;
+		brokenBy.set(key, [...(brokenBy.get(key) ?? []), v]);
+	}
 
 	// Per-folder adjacency, keyed by slug. A plain object, not a Map: the
 	// payload is JSON inlined into the HTML, where a Map would serialize to
@@ -183,7 +204,11 @@ const { FACT_KINDS } = require("../../../entities/kinds");
 	// `scopeAccess` chains. Drawn as one line with two labels they read as a
 	// single rule, so each action keeps its own arrow, its own label and its own
 	// lane.
-	const merged = drawn.map((e) => ({ ...e, kinds: [e.kind], scope: [...(e.scope ?? [])] }));
+	const merged = drawn.map((e) => {
+		const broken = brokenBy.get(`${e.kind}|${e.from}|${e.to}`) ?? null;
+
+		return { ...e, kinds: [e.kind], scope: [...(e.scope ?? [])], ...(broken ? { broken: true, brokenCount: broken.length } : {}) };
+	});
 
 	const byNode = Object.fromEntries(nodes.map((n) => [n.slug, { in: [], out: [] }]));
 	for (const e of merged) {
@@ -232,10 +257,13 @@ const { FACT_KINDS } = require("../../../entities/kinds");
 				if (seenRoleEdge.has(key)) continue;
 				seenRoleEdge.add(key);
 				const scope = (entry.via === "import" ? [] : action.scopeAccess ?? []).map(accessorLabel);
+				// The rule itself is broken somewhere: the arrow is the finding.
+				const roleBroken = violations.some((v) => v.kind === kind && v.role === targetSlug);
 				roleGraphEdges.push({
 					kind,
 					kinds: [kind],
 					scope,
+					...(roleBroken ? { broken: true } : {}),
 					from: entry.role,
 					to: targetSlug,
 					fromPath: entry.role,

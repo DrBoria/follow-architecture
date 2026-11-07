@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styled from "styled-components";
-import { COL, buildGraph, edgeLines, visibleSlugs } from "../utils/layout";
+import { COL, buildGraph, edgeLines, visibleSlugs, textFlow } from "../utils/layout";
 import { nodeLabel } from "../utils/format";
 
 // A folder-access graph: the boxes are the DECLARED nodes, the arrows are the
@@ -28,6 +28,21 @@ const ZOOM_MIN = 1;
 const ZOOM_MAX = 12;
 const ZOOM_STEP = 1.35;
 
+// The canvas height is a CSS decision, not a JS one: a media query doubles it on
+// a wide screen, so the drawing grows with the page without a resize listener
+// (a listener missed the change when the window was resized programmatically).
+const GraphSvg = styled.svg`
+	display: block;
+	width: 100%;
+	max-width: 100%;
+	touch-action: none;
+	height: ${(p) => (p.$full ? "100%" : `${Math.max(p.$h, 260)}px`)};
+	${(p) =>
+		p.$grow
+			? `@media (min-width: 1200px) { height: ${p.$full ? "100%" : `${Math.max(p.$h * 2, 520)}px`}; }`
+			: ""}
+`;
+
 const ZoomBar = styled.div`
 	position: absolute;
 	right: 8px;
@@ -42,6 +57,30 @@ const ZoomBar = styled.div`
 	font-family: monospace;
 	font-size: 11px;
 	user-select: none;
+`;
+
+// The opened place list: an overlay ON the canvas, because the control that
+// opens it lives on the canvas. It used to render under the drawing, which put
+// the answer out of sight and made `+N more` look like a dead control.
+const PlacesPanel = styled.div`
+	position: absolute;
+	left: 10px;
+	bottom: 10px;
+	right: 10px;
+	z-index: 3;
+	max-height: 45%;
+	overflow: auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 8px 12px;
+	padding: 8px 10px;
+	border: 1px solid ${(p) => p.theme.color.border};
+	border-radius: 8px;
+	background: rgba(11, 16, 23, 0.94);
+	font-family: monospace;
+	font-size: 11.5px;
+	color: #c3ccd9;
 `;
 
 // Fullscreen preview: the SAME graph, the same state, drawn over the whole
@@ -94,56 +133,131 @@ const Pct = styled(ZoomBtn)`
 const fit = (text, size = 10.5, reserved = 0) => {
 	const budget = Math.max(4, Math.floor((COL.width - 12 - reserved) / (size * 0.6)));
 	const s = String(text ?? "");
-	return s.length > budget ? `${s.slice(0, budget - 1)}…` : s;
+	if (s.length <= budget) return s;
+	// A path is recognised by its END (`…/actions`), so a long one loses its
+	// middle, on a `/` boundary — cutting the tail left `apps/backend/{kebab-case}/…`
+	// with the one segment the reader needs gone.
+	const room = budget - 1;
+	const headEnd = s.lastIndexOf("/", Math.ceil(room / 2));
+	const tailStart = s.indexOf("/", s.length - Math.floor(room / 2));
+	if (headEnd > 0 && tailStart > headEnd) return `${s.slice(0, headEnd + 1)}…${s.slice(tailStart)}`;
+	return `${s.slice(0, room - 1)}…`;
 };
 
-const NodeBox = ({ box, node, active, onClick, dashed, loops = [] }) => {
-	const fill = active ? "rgba(110,168,254,0.20)" : "#161d2b";
-	const stroke = active ? "#6ea8fe" : "#2a3547";
+// The glyph that goes in front of a repair's word. One table, so the box never
+// shows a "split" sign next to the word "declare".
+const GLYPH = { delete: "✕", split: "⑂", rewrite: "✎", merge: "⊕", declare: "◇", create: "＋", move: "→" };
+
+const NodeBox = ({ box, node, active, onClick, onMore, dashed, loops = [], mark = null }) => {
+	// ONE path per box. A role is titled by its NAME and lists the places it may
+	// be met at; a folder is titled by its path and needs no second line repeating
+	// it — that line was the same string one row down, and it read as a mistake.
+	const title = node.places?.length ? (node.name ?? node.slug) : (node.paths?.[0] ?? node.slug);
+	const places = (node.places ?? []).filter((p) => p !== title);
+	// No second line for a folder: the title IS its path (shortened to the box
+	// width, the full one in the tooltip). Repeating it one row down was the
+	// "why is the same path printed twice" look. A box that has an ACTION to show
+	// uses that line for it — a rule with no destination still says what it wants.
+	const label = node.action ? `${GLYPH[node.action] ?? "•"} ${node.action}` : null;
+	// Every `y` below comes from `textFlow` — the same function the layout uses to
+	// size the box. Hardcoding the offsets here is what let a badge land on text.
+	const flow = textFlow({ ...node, places }, loops.length, label);
+	// A box is often taller than its text (it grows for the arrows leaving it), so
+	// the block is centred in it: equal space above and below, never "text glued
+	// to the top with a hole under it".
+	const dy = Math.max(0, Math.round((box.h - flow.height) / 2));
+	const ty = (offset) => box.y + offset + dy;
+	// A box is the code's PLACE. `wrong` says the code in it does not belong
+	// there (the finding is about the placement itself), `right` is where it
+	// belongs: red cross vs green tick, both drawn on the box.
+	const fill = mark === "wrong" ? "rgba(255,92,92,0.14)" : mark === "right" ? "rgba(74,222,128,0.10)" : active ? "rgba(110,168,254,0.20)" : "#161d2b";
+	const stroke = mark === "wrong" ? "#ff5c5c" : mark === "right" ? "#4ade80" : active ? "#6ea8fe" : "#2a3547";
 	return (
 		<g onClick={onClick} style={{ cursor: onClick ? "pointer" : "default" }}>
-			<rect x={box.x} y={box.y} width={box.w} height={box.h} rx={9} fill={fill} stroke={stroke} strokeWidth={active ? 2 : 1} strokeDasharray={dashed ? "5 4" : undefined} />
-			<title>{node.places?.length ? `${node.name ?? node.slug}: ${node.places.join(", ")}` : node.paths?.[0] ?? node.slug}</title>
+			<rect
+				x={box.x}
+				y={box.y}
+				width={box.w}
+				height={box.h}
+				rx={9}
+				fill={fill}
+				stroke={stroke}
+				strokeWidth={mark ? 2.2 : active ? 2 : 1}
+				strokeDasharray={mark ? "6 4" : dashed ? "5 4" : undefined}
+			/>
+			{mark ? (
+				<text x={box.x + box.w - 10} y={box.y + box.h - 7} fill={stroke} fontSize="12" fontWeight="700" textAnchor="end" fontFamily="monospace">
+					{mark === "wrong" ? "✕" : "✓"}
+				</text>
+			) : null}
+			<title>{places.length ? `${node.name ?? node.slug}: ${places.join(", ")}` : node.paths?.[0] ?? node.slug}</title>
 			{/* A box grows to fit the arrows leaving it, so the text is centred in
 			    whatever height it got instead of hugging the top edge. */}
-			<text x={box.x + 10} y={box.y + 14} fill="#d7dee8" fontSize="10.5" fontWeight="600" fontFamily="monospace">
-				{fit(node.places ? (node.name ?? node.slug) : nodeLabel(node, 2), 10, node.fileCount ? 26 : 0)}
+			<text x={box.x + 10} y={ty(flow.nameY)} fill="#d7dee8" fontSize="10.5" fontWeight="600" fontFamily="monospace">
+				{fit(title, 10, node.fileCount ? 26 : 0)}
 			</text>
 			{/* A role is ONE thing that may be met in several places: the places are
 			    listed inside its box, so "controller" reads as one entity with three
 			    homes instead of three boxes that look unrelated. */}
-			{node.places?.length ? (
+			{places.length ? (
 				<>
-					{node.places.slice(0, 3).map((pl, i) => (
-						<text key={pl} x={box.x + 10} y={box.y + 28 + i * 11} fill="#8b9bb4" fontSize="8.5" fontFamily="monospace">
-							{fit(pl, 8.5)}
+					{places.slice(0, 3).map((pl, i) => (
+						<text key={pl} x={box.x + 10} y={ty(flow.placeYs[i])} fill="#8b9bb4" fontSize="8.5" fontFamily="monospace">
+							{/* The place keeps clear of the file count in the corner, exactly
+							    like the title does — otherwise a long path runs under it. */}
+							{fit(pl, 8.5, node.fileCount ? 26 : 0)}
 						</text>
 					))}
-					{node.places.length > 3 ? (
-						<text x={box.x + 10} y={box.y + 28 + 3 * 11} fill="#6b7788" fontSize="8.5" fontFamily="monospace">
-							+{node.places.length - 3} more
+					{places.length > 3 ? (
+						// A real control, not a dead label: it opens the full list of
+						// places ON the canvas (the box itself has no room to grow, and
+						// growing it would move every port and arrow). The line sits right
+						// after the last place, in the same flow — a fixed offset was what
+						// printed `+1 more` on top of the place above it.
+						<text
+							x={box.x + 10}
+							y={ty(flow.overflowY)}
+							fill="#6ea8fe"
+							fontSize="8.5"
+							fontFamily="monospace"
+							style={{ cursor: "pointer", textDecoration: "underline" }}
+							// The canvas captures the pointer to pan when zoomed; without
+							// stopping it here the control receives nothing and reads as dead.
+							onPointerDown={(event) => {
+								event.stopPropagation();
+							}}
+							onClick={(event) => {
+								event.stopPropagation();
+								onMore?.(node.slug);
+							}}
+						>
+							+{places.length - 3} more
 						</text>
 					) : null}
 				</>
-			) : (
-				<text x={box.x + 10} y={box.y + 30} fill="#6b7788" fontSize="9" fontFamily="monospace">
-					{fit(nodeLabel(node, 3), 9.5)}
+			) : label ? (
+				<text x={box.x + 10} y={ty(flow.labelY)} fill={node.action ? "#c8a2ff" : "#6b7788"} fontSize="9" fontFamily="monospace">
+					{fit(label, 9.5)}
 				</text>
-			)}
+			) : null}
 			{node.fileCount ? (
-				<text x={box.x + box.w - 9} y={box.y + box.h / 2 - 6} fill="#6b7788" fontSize="10" textAnchor="end" fontFamily="monospace">
+				<text x={box.x + box.w - 9} y={box.y + 13} fill="#6b7788" fontSize="10" textAnchor="end" fontFamily="monospace">
 					{node.fileCount}f
 				</text>
 			) : null}
 			{/* A self-relation is a property of the folder, not a place on the
 			    canvas, so it is written ON the folder — WITH the role that may do
-			    it, otherwise "who may mutate an action?" has no answer here. */}
-			{loops.map((l, i) => (
-				<text key={l.kind} x={box.x + 10} y={box.y + box.h - 8 - (loops.length - 1 - i) * 12} fill="#8b9bb4" fontSize="8.5" fontFamily="monospace">
-					↻ {l.kind}
-					{l.who?.length ? ` · ${l.who.join(", ")}` : ""}
-				</text>
-			))}
+			    it, otherwise "who may mutate an action?" has no answer here.
+			    They start BELOW the text block: the box grows for them (see
+			    `textHeightOf` in layout), so a badge never lands on a place line. */}
+			{loops.map((l, i) => {
+				return (
+					<text key={l.kind} x={box.x + 10} y={ty(flow.badgeYs[i])} fill="#8b9bb4" fontSize="8.5" fontFamily="monospace">
+						↻ {l.kind}
+						{l.who?.length ? ` · ${l.who.join(", ")}` : ""}
+					</text>
+				);
+			})}
 		</g>
 	);
 };
@@ -151,8 +265,10 @@ const NodeBox = ({ box, node, active, onClick, dashed, loops = [] }) => {
 // Memoised: the layout below is `buildGraph` over every visible node and edge, and
 // a parent that re-renders on each keystroke must not pay for it. Props are arrays
 // and objects, so the CALLER memoises them too (see FindingsScreen).
-export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindColors, focus = null, onFocus = null, height = 320, showAll = false }) {
+export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindColors, focus = null, onFocus = null, height = 320, showAll = false, growOnWide = false, marks = {}, keep = [] }) {
 	const [hover, setHover] = useState(null);
+	// The node whose full place list is open (“+N more”).
+	const [placesFor, setPlacesFor] = useState(null);
 
 	// Self-relations are rendered as a badge on the box (see NodeBox), so the
 	// canvas keeps only arrows between different folders.
@@ -174,13 +290,19 @@ export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindC
 		}
 		return map;
 	}, [edges]);
-	const visible = useMemo(() => visibleSlugs({ nodes, edges, focus, showAll }), [nodes, edges, focus, showAll]);
+	const visible = useMemo(() => visibleSlugs({ nodes, edges, focus, showAll, keep }), [nodes, edges, focus, showAll, keep]);
 	const drawNodes = useMemo(() => nodes.filter((n) => visible.has(n.slug)), [nodes, visible]);
-	const { positions, width, height: h, links } = useMemo(() => buildGraph(drawNodes, drawEdges), [drawNodes, drawEdges]);
+	// The box has to be tall enough for ITS OWN text: the name, one line per place
+	// it may be met at, and one badge per self-rule. Height used to be decided by
+	// the arrow count alone, so a role with three places drew its last place on
+	// top of its own self-rule badges.
+	const loopsOf = useCallback((slug) => loopKinds.get(slug)?.length ?? 0, [loopKinds]);
+	const { positions, width, height: h, links } = useMemo(() => buildGraph(drawNodes, drawEdges, { loopsOf }), [drawNodes, drawEdges, loopsOf]);
 
 	const selfCount = useMemo(() => edges.filter((e) => e.from === e.to).length, [edges]);
 	const active = hover ?? null;
 	const colorOf = (kind) => kindColors?.[kind] ?? "#7d8899";
+	const placesNode = placesFor ? drawNodes.find((n) => n.slug === placesFor) : null;
 
 	// ── Zoom and pan ─────────────────────────────────────────────────────────
 	// The canvas is a VIEWPORT onto the graph: the `viewBox` is the rectangle of
@@ -330,8 +452,11 @@ export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindC
 	// hover state, same zoom — so entering the preview never loses the folder the
 	// reader was looking at.
 	const drawing = (
-				<svg
+				<GraphSvg
 					ref={setSvgEl}
+					$h={height}
+					$full={full}
+					$grow={growOnWide}
 					// The viewport keeps the element's own shape (see `fit`), so
 					// `meet` never letterboxes and screen↔graph is a plain ratio.
 					viewBox={`${zoom.x} ${zoom.y} ${fit.w / zoom.s} ${fit.h / zoom.s}`}
@@ -343,9 +468,11 @@ export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindC
 					// `max-width: 100%` + a FIXED height keep the drawing inside its
 					// own cell: an SVG with only a viewBox still claims its intrinsic
 					// size in a flex/grid track and would paint over the neighbour.
-					style={{ display: "block", width: "100%", height: full ? "100%" : Math.max(height, 260), maxWidth: "100%", touchAction: "none" }}
 				>
 				<defs>
+					<marker id="acc-arrow-broken" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+						<path d="M 0 0 L 10 5 L 0 10 z" fill="#ff5c5c" />
+					</marker>
 					{Object.entries(kindColors ?? {}).map(([kind, color]) => (
 						<marker key={kind} id={`acc-arrow-${kind}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
 							<path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
@@ -354,27 +481,40 @@ export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindC
 				</defs>
 				<g transform={`translate(${PAD_X},${PAD_Y})`}>
 					{links.map(({ edge, path, lx, ly }, i) => {
-						const color = colorOf(edge.kind);
+						// A broken relation is the finding itself: an arrow that exists in
+						// the code but NOT in the architecture. Drawn bright red, dashed and
+						// labelled with a cross, so the wrong edge is the thing you see.
+						const broken = edge.broken === true;
+						const color = broken ? "#ff5c5c" : colorOf(edge.kind);
 						const isActive = active === edge;
 						const { kinds, via } = edgeLines(edge);
 						const lines = [
-							...kinds.map((k) => ({ text: k, fill: color })),
+							...kinds.map((k) => ({ text: broken ? `✕ ${k}` : k, fill: color })),
 							...via.map((v) => ({ text: v, fill: "#56c8a8" })),
 						];
 						const pill = Math.max(...lines.map((l) => l.text.length * 5.4 + 10));
+						// A label ON a box is unreadable: the layout places pills in free
+						// space, and this is the guarantee, not the intention — whatever the
+						// layout decides, a pill whose rectangle touches a box is not drawn.
+						const overBox =
+							lx != null &&
+							[...positions.values()].some(
+								(b) => lx - pill / 2 < b.x + b.w && lx + pill / 2 > b.x && ly - 8.5 < b.y + b.h && ly - 8.5 + lines.length * 11 + 2 > b.y,
+							);
 						return (
 							<g key={`l${i}`} onMouseEnter={() => setHover(edge)} onMouseLeave={() => setHover(null)}>
 								<path
 									d={path}
 									fill="none"
 									stroke={color}
-									strokeWidth={isActive ? 3 : 1.7}
-									strokeOpacity={isActive ? 1 : 0.7}
-									markerEnd={`url(#acc-arrow-${edge.kind})`}
+									strokeWidth={broken ? 3.2 : isActive ? 3 : 1.7}
+									strokeOpacity={broken ? 1 : isActive ? 1 : 0.7}
+									strokeDasharray={broken ? "7 5" : undefined}
+									markerEnd={`url(#acc-arrow-${broken ? "broken" : edge.kind})`}
 								/>
-								{lx != null ? (
+								{lx != null && !overBox ? (
 									<>
-										<rect x={lx - pill / 2} y={ly - 8.5} width={pill} height={lines.length * 11 + 2} rx={3} fill="#0a0d13" stroke={color} strokeOpacity={0.4} />
+										<rect x={lx - pill / 2} y={ly - 8.5} width={pill} height={lines.length * 11 + 2} rx={3} fill={broken ? "#2a0d0d" : "#0a0d13"} stroke={color} strokeOpacity={broken ? 0.95 : 0.4} />
 										{lines.map((l, n) => (
 											<text key={`${l.text}-${n}`} x={lx} y={ly + n * 11} fill={l.fill} fontSize="9" textAnchor="middle" fontFamily="monospace">
 												{l.text}
@@ -392,13 +532,15 @@ export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindC
 							box={positions.get(n.slug)}
 							node={n}
 							active={focus === n.slug}
+							mark={marks?.[n.slug] ?? null}
 							loops={loopKinds.get(n.slug) ?? []}
 							dashed={!n.fileCount}
+							onMore={setPlacesFor}
 							onClick={onFocus ? () => onFocus(focus === n.slug ? null : n.slug) : undefined}
 						/>
 					))}
 				</g>
-				</svg>
+				</GraphSvg>
 
 	);
 
@@ -423,6 +565,28 @@ export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindC
 		</ZoomBar>
 	);
 
+	// The full list of a role's places, ON the canvas: `+N more` used to open a
+	// strip BELOW the drawing, out of sight, which read as a dead control.
+	const placesPanel = placesNode ? (
+		<PlacesPanel>
+			<span style={{ color: "#6b7788" }}>
+				{placesNode.places.length} places of {placesNode.name ?? placesNode.slug}:
+			</span>
+			{placesNode.places.map((place) => (
+				<code key={place} style={{ color: "#8b9bb4" }}>
+					{place}
+				</code>
+			))}
+			<button
+				type="button"
+				onClick={() => setPlacesFor(null)}
+				style={{ marginLeft: "auto", background: "transparent", border: "1px solid #2a3547", borderRadius: 6, color: "#8b9bb4", cursor: "pointer", padding: "1px 8px", font: "inherit" }}
+			>
+				close
+			</button>
+		</PlacesPanel>
+	) : null;
+
 	return (
 		<div style={{ display: "grid", gap: 10 }}>
 			{full ? (
@@ -440,12 +604,16 @@ export const AccessGraph = React.memo(function AccessGraph({ nodes, edges, kindC
 					</OverlayHead>
 					<Canvas $panning={panning} style={{ flex: 1, minHeight: 0 }}>
 						{drawing}
+						{placesPanel}
 					</Canvas>
 				</Overlay>
 			) : (
 				<div style={{ position: "relative", minWidth: 0 }}>
 					{toolbar}
-					<Canvas $panning={panning}>{drawing}</Canvas>
+					<Canvas $panning={panning}>
+						{drawing}
+						{placesPanel}
+					</Canvas>
 				</div>
 			)}
 			{active ? (

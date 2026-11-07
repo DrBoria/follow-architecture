@@ -19,6 +19,31 @@ export const COL = { width: 200, gapX: 92, row: 70, gapY: 46 };
 const LANE = 18;
 const PAD = 14;
 
+// WHERE the text of a box goes and how tall the block is — ONE arithmetic,
+// shared by the layout (which sizes the box) and the renderer (which draws the
+// lines), and ONE rhythm: every line is 12px below the one above it, whatever it
+// is — the name, a place, `+N more`, a `↻` badge. Two copies of this arithmetic
+// is how a badge ended up printed on the place line above it; several different
+// steps is why the box read as ragged.
+export const LINE = 12;
+export const textFlow = (node, loops = 0, label = null) => {
+	const places = node?.places?.length ?? 0;
+	const shown = Math.min(places, 3);
+	const lineY = (i) => 16 + i * LINE;
+	const placeYs = [];
+	for (let i = 0; i < shown; i++) placeYs.push(lineY(1 + i));
+	// `+N more` sits on the NEXT line of the same rhythm, not at a fixed offset.
+	const overflowY = places > 3 ? lineY(1 + shown) : null;
+	// A box without places may carry ONE more line (a description) — and only
+	// when it says something the title does not already say.
+	const labelY = !places && label ? lineY(1) : null;
+	const textLines = places ? shown + (places > 3 ? 1 : 0) : labelY != null ? 1 : 0;
+	const badgeYs = [];
+	for (let i = 0; i < loops; i++) badgeYs.push(lineY(1 + textLines + i));
+	const last = badgeYs.length ? badgeYs[badgeYs.length - 1] : lineY(textLines);
+	return { nameY: lineY(0), placeYs, overflowY, labelY, badgeYs, height: last + 8 };
+};
+
 export const computeDepths = (nodes) => {
 	const bySlug = new Map(nodes.map((n) => [n.slug, n]));
 	const depth = new Map();
@@ -218,10 +243,17 @@ export const buildGraph = (nodes, edges, options = {}) => {
 		if (p.edge.to !== p.edge.from) touching.set(p.edge.to, touching.get(p.edge.to) + 1);
 	}
 	const labelH = plans.length ? Math.max(...plans.map((p) => pillSize(p.edge).h)) : 12;
+	const nodeBySlug = new Map(nodes.map((n) => [n.slug, n]));
+	// How tall the box's own TEXT block is: the name, then either the places it
+	// may be met at (a role is one entity with several homes) or a one-line
+	// description, then one badge per self-rule. Ports are not the only thing a
+	// box has to fit — that is how a role with three places drew its last place
+	// on top of its own badges.
+	const textHeightOf = (slug) => textFlow(nodeBySlug.get(slug), options.loopsOf?.(slug) ?? 0).height;
 	const heightOf = (slug) => {
 		const n = touching.get(slug) ?? 0;
 		const needed = (n + 1) * (labelH + 12) - 12;
-		return Math.max(COL.row, Math.min(needed, 420));
+		return Math.max(COL.row, Math.min(needed, 420), textHeightOf(slug));
 	};
 
 	const positions = new Map();
@@ -330,66 +362,117 @@ export const buildGraph = (nodes, edges, options = {}) => {
 		return xM > r.x && xm < r.x + r.w && yM > r.y && ym < r.y + r.h;
 	};
 	const boxes = [...positions.values()];
-	const taken = [];
+
+	// Occupancy GRID, not a list to scan. The old search tried every 4px slot on
+	// the whole canvas — on a big graph (1572×5002) that is ~490k candidates for
+	// EVERY arrow, with each candidate compared against all boxes and all arrows:
+	// 13 seconds for one graph, and the page looked frozen. A cell lookup makes
+	// "is this rectangle free" cost the handful of rects in its own cells, and
+	// the search below visits a bounded number of candidates.
+	const CELL = 48;
+	const occupied = new Map();
+	const cellsOf = (r) => {
+		const out = [];
+		const x0 = Math.floor(r.x / CELL);
+		const x1 = Math.floor((r.x + r.w) / CELL);
+		const y0 = Math.floor(r.y / CELL);
+		const y1 = Math.floor((r.y + r.h) / CELL);
+		for (let x = x0; x <= x1; x += 1) for (let y = y0; y <= y1; y += 1) out.push(`${x}|${y}`);
+		return out;
+	};
+	const occupy = (r) => {
+		for (const key of cellsOf(r)) {
+			const list = occupied.get(key);
+			if (list) list.push(r);
+			else occupied.set(key, [r]);
+		}
+	};
+	const overlaps = (a, b) => a.x + a.w > b.x && a.x < b.x + b.w && a.y + a.h > b.y && a.y < b.y + b.h;
+	const freeRect = (r) => {
+		for (const key of cellsOf(r)) {
+			const list = occupied.get(key);
+			if (!list) continue;
+			for (const o of list) if (overlaps(r, o)) return false;
+		}
+		return true;
+	};
+	for (const b of boxes) occupy(b);
+
+	// A label also may not sit ON an arrow. The boxes/labels part is the grid; the
+	// arrows are checked only for the few candidates that pass it.
 	const free = (rect, others, self) =>
-		!boxes.some((b) => rect.x + rect.w > b.x && rect.x < b.x + b.w && rect.y + rect.h > b.y && rect.y < b.y + b.h) &&
+		freeRect(rect) &&
 		!others.some((seg) => hitsRect(seg, rect)) &&
 		// Not on its OWN line either: the label belongs above or below the arrow
 		// it names, never struck through by it.
-		!self.some((seg) => hitsRect(seg, rect)) &&
-		!taken.some((o) => rect.x + rect.w > o.x && rect.x < o.x + o.w && rect.y + rect.h > o.y && rect.y < o.y + o.h);
+		!self.some((seg) => hitsRect(seg, rect));
 
 	for (const l of links) {
 		const { w: pill, h: tall } = pillSize(l.edge);
 		const xs = l.points.map((pt) => pt[0]);
-		const lo = Math.min(...xs) + pill / 2 + 2;
-		const hi = Math.max(...xs) - pill / 2 - 2;
+		const ys = l.points.map((pt) => pt[1]);
+		const midX = (Math.min(...xs) + Math.max(...xs)) / 2;
+		const minY = Math.min(...ys);
+		const maxY = Math.max(...ys);
+		const midY = (minY + maxY) / 2;
+		const runs = l.points.filter((pt, i) => i < l.points.length - 1 && Math.abs(l.points[i + 1][1] - pt[1]) < 0.5).map((pt) => pt[1]);
 		const others = links.filter((o) => o !== l).flatMap((o) => o.points.slice(0, -1).map((pt, i) => [pt, o.points[i + 1]]));
 		const self = l.points.slice(0, -1).map((pt, i) => [pt, l.points[i + 1]]);
+		const candidates = runs.length ? runs : [(minY + maxY) / 2];
 		let found = null;
 
-		if (hi > lo) {
-			// 1. hugging one of its own horizontal runs, above it first
-			const runs = l.points.filter((pt, i) => i < l.points.length - 1 && Math.abs(l.points[i + 1][1] - pt[1]) < 0.5).map((pt) => pt[1]);
-			const mid = (lo + hi) / 2;
-			const step = Math.max(1, (hi - lo) / 16);
-			for (const y of [...new Set(runs)]) {
-				for (let k = 0; k <= 16 && !found; k += 1) {
-					const cx = mid + (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * step;
-					if (cx < lo - 0.5 || cx > hi + 0.5) continue;
-					for (const top of [y - 4 - tall, y + 4]) {
-						const rect = { x: cx - pill / 2, y: top, w: pill, h: tall };
-						if (rect.y < 3 || rect.y + rect.h > height - 2) continue;
-						if (free(rect, others, self)) {
-							found = { cx, rect };
-							break;
-						}
-					}
+		const tryAt = (cx, top) => {
+			if (cx < pill / 2 + 2 || cx > width - pill / 2 - 2) return false;
+			const rect = { x: cx - pill / 2, y: top, w: pill, h: tall };
+			if (rect.y < 3 || rect.y + rect.h > height - 2) return false;
+			if (!free(rect, others, self)) return false;
+			found = { cx, rect };
+			return true;
+		};
+
+		// 1. Hugging one of its own horizontal runs, above it first, as close to
+		// the arrow's midpoint as possible. Few candidates, exact segment checks.
+		const step = Math.max(4, tall / 2);
+		const maxShift = Math.min(700, Math.max(240, (Math.max(...xs) - Math.min(...xs)) / 2 + pill));
+		for (let d = 0; d <= maxShift && !found; d += step) {
+			for (const y of candidates) {
+				for (const cx of d === 0 ? [midX] : [midX - d, midX + d]) {
+					for (const top of [y - 4 - tall, y + 4]) if (tryAt(cx, top)) break;
+					if (found) break;
 				}
 				if (found) break;
 			}
 		}
 
+		// 2. Bounded sweep of the arrow's own neighbourhood. Bounded ON PURPOSE:
+		// a label a little further away is fine, an unbounded canvas search is not.
 		if (!found) {
-			// 2. anywhere at all, nearest to the arrow first: when a strip already
-			// holds another arrow's vertical run, no slot inside it is free, and a
-			// label a little to the side is better than no label on the picture.
-			const runs = l.points.filter((pt, i) => i < l.points.length - 1 && Math.abs(l.points[i + 1][1] - pt[1]) < 0.5).map((pt) => pt[1]);
-			const cx0 = (Math.min(...xs) + Math.max(...xs)) / 2;
-			const cost = (rect) => {
-				const dy = runs.length ? Math.min(...runs.map((y) => Math.abs(rect.y + tall / 2 - y))) : 0;
-				const dx = Math.abs(rect.x + rect.w / 2 - cx0);
-				return dy * 2 + dx;
-			};
-			const slots = [];
-			for (let top = 3; top + tall <= height - 2; top += 4) {
-				for (let cx = pill / 2 + 2; cx <= width - pill / 2 - 2; cx += 4) slots.push({ cx, rect: { x: cx - pill / 2, y: top, w: pill, h: tall } });
+			const y0 = Math.max(3, minY - tall - 12);
+			const y1 = Math.min(height - tall - 2, maxY + 12);
+			const x0 = Math.max(pill / 2 + 2, Math.min(...xs) - pill);
+			const x1 = Math.min(width - pill / 2 - 2, Math.max(...xs) + pill);
+			for (let top = y0; top <= y1 && !found; top += Math.max(6, tall)) {
+				for (let cx = x0; cx <= x1; cx += Math.max(8, pill)) {
+					if (tryAt(cx, top)) break;
+				}
 			}
-			slots.sort((a, b) => cost(a.rect) - cost(b.rect));
-			for (const slot of slots) {
-				if (free(slot.rect, others, self)) {
-					found = slot;
-					break;
+		}
+
+		// 3. Last resort: a coarse row-major pass from the arrow outwards. Coarse
+		// steps keep it a few thousand candidates at most — the old code tried
+		// every 4px slot of the whole canvas, which is where the 13-second graph
+		// came from.
+		if (!found) {
+			const stepX = Math.max(16, pill * 0.5);
+			const stepY = Math.max(10, tall * 0.75);
+			const startY = Math.max(3, Math.min(minY - tall, midY - tall));
+			const startX = Math.max(pill / 2 + 2, Math.min(...xs) - pill);
+			let tries = 0;
+			for (let top = startY; top + tall <= height - 2 && !found && tries < 4000; top += stepY) {
+				for (let cx = startX; cx <= width - pill / 2 - 2; cx += stepX) {
+					tries += 1;
+					if (tries > 4000) break;
+					if (tryAt(cx, top)) break;
 				}
 			}
 		}
@@ -397,7 +480,7 @@ export const buildGraph = (nodes, edges, options = {}) => {
 		if (found) {
 			l.lx = found.cx;
 			l.ly = found.rect.y + 8.5;
-			taken.push(found.rect);
+			occupy(found.rect);
 		}
 	}
 
@@ -405,10 +488,12 @@ export const buildGraph = (nodes, edges, options = {}) => {
 };
 
 // Nodes worth drawing: everything touched by an edge, plus the focus and its
-// neighbours (so selecting a node never leaves it stranded).
-export const visibleSlugs = ({ edges, focus, showAll, nodes }) => {
+// neighbours (so selecting a node never leaves it stranded), plus the boxes the
+// PICTURE asked for (`keep`) — a finding about one declaration draws that file
+// with no arrow at all, and an edge-only rule left the canvas empty.
+export const visibleSlugs = ({ edges, focus, showAll, nodes, keep: wanted = [] }) => {
 	if (showAll) return new Set(nodes.map((n) => n.slug));
-	const keep = new Set();
+	const keep = new Set(wanted ?? []);
 	for (const e of edges) {
 		if (!e.from || !e.to) continue;
 		keep.add(e.from);

@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { enrichWithRoles, roleOfTarget } = require("../../code-roles/connector");
-const { rolesAtPath } = require("../../nodes/homes");
-const { buildTree } = require("../../nodes/tree");
+const { rolesAtPath } = require("../../entities/location");
+const { buildTree } = require("../../entities/tree");
 
 describe("roleOfTarget", () => {
 	const toMap = (cands) => new Map(cands.filter((c) => c.name && c.role).map((c) => [c.name, c]));

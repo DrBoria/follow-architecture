@@ -146,7 +146,7 @@ invariants:
 The yaml describes **what the code must look like** — it carries no scan scope. Where the tool looks is a tool concern, set separately:
 
 - **CLI** — `--files <glob>` (files to scan; default: the whole tree), `--ext <.ext>` (repeatable, added to the built-in source extensions), `--ignore <glob>` (repeatable, file globs skipped), `--ignore-dir <name>` (repeatable, folders not entered).
-- **ESLint rule options** — `{ config, exts?, ignoreDirs?, ignores?, include? }`: `exts` (added to the built-in source extensions), `ignoreDirs` (folder names not entered, added to the built-in `node_modules`, `.git`, `.vscode-test`, `out`, `dist`, `build`, `coverage`), `ignores` (file globs skipped) and `include` (only these globs are checked).
+- **ESLint rule options** — `{ config, exts?, ignoreDirs?, ignores?, include?, exportPath? }`: `exts` (added to the built-in source extensions), `ignoreDirs` (folder names not entered, added to the built-in `node_modules`, `.git`, `.vscode-test`, `out`, `dist`, `build`, `coverage`), `ignores` (file globs skipped), `include` (only these globs are checked) and `exportPath` (where the run writes its HTML overview — the same self-contained report `--overview` produces; default `reports/architecture-overview.html`, `false` turns it off). The export file is accumulated across every linted file and written when the run ends, so a plain `eslint <dirs>` run leaves the whole report on disk.
 - The built-in extension list (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.vue`, `.svelte`) is only a default: `--ext` / `exts` add to it.
 
 ## Placeholders
@@ -305,7 +305,7 @@ codeRoles:
 
 ## Code roles
 
-A **candidate** is any function-like node (declaration, expression, arrow, method, accessor), any **class**, or a variable declaration. A class is a candidate so a decorator/DI design is describable without engine support: its facts carry `decorators`, `extends`, `implements`, `members` (each with its own decorators) and `constructorParams`. Nothing in the engine knows what `Component`, `Injectable` or `NgModule` mean — the YAML does.
+A **candidate** is any function-like node (declaration, expression, arrow, method, accessor), any **class**, or a variable declaration. A class is a candidate so a decorator/DI design is describable without engine support: its facts carry `kind.decorators`, `extends`, `implements`, `members` (each with its own decorators) and `constructorParams`. Nothing in the engine knows what `Component`, `Injectable` or `NgModule` mean — the YAML does.
 
 `.vue` / `.svelte` single-file components are parsed too: only the `<script>` block is handed to the parser and every other line is blanked, so reported line numbers still match the file in the editor. For each candidate the plugin collects raw facts (below) and assigns the **first** role (in YAML declaration order) whose `infer` filter matches.
 
@@ -351,7 +351,7 @@ Every `infer` / `where`-by filter uses one grammar ([entities/queries.js](entiti
 Each entry is either an **operator** or a **field** of the item — one field at a time, on every fact:
 `{ name: { equals: "x" } }` → `item.name` must pass it; `{ kind: { own: { is: { in: […] } } } }` → `item.kind.own.is` must. There is no shorthand for a structured fact.
 
-Scalar operators: `equals`, `not`, `lt`, `lte`, `gt`, `gte`, `in`, `notIn`, `contains`, `startsWith`, `endsWith`, `isSet`, `setEquals`, `globMatches`.
+Scalar operators: `equals`, `not`, `lt`, `lte`, `gt`, `gte`, `in`, `notIn`, `contains`, `startsWith`, `endsWith`, `isSet`, `setEquals`, `matches`.
 
 List operators (list values only; a missing/non-list field simply fails the filter): `length`, `every`, `any`, `none`, `where` (`{ filter, by }` — narrows the list, then applies `by`).
 
@@ -389,10 +389,10 @@ Every facet is the same descriptor — `{ is, name, line }` plus what that node 
 | `calls` | `[{ kind, origin, action, module, target, forwardsAllParams, targetRole }]` — running somebody's code |
 | `assignments` | `[{ line, target, method, value, via, module, onThis, type, param, local, relation }]` — every write, in one fact. `via` is `assign` / `call` / `delete` / `freeze` / `seal`; `value` is the root identifier written into; `module` is the other module whose value it is; `onThis` marks `this.x`; `type` is the file declaring the written value's type; `param` says the root is one of this function's parameters. `relation` is the ONE classification of the write — `mutate` (somebody else's value), `assign` (a value that was handed in or is declared in the repo) or `null` (the piece's own local, which no role has a say in) |
 | `returns` | `[{kind, exprKind, origin, members}]` — the value it yields |
-| `kind` | what it is and what is around/below it: `own` / `parent` / `ancestors` / `children` / `siblings` / `descendants` |
+| `kind` | what it is, what is around/below it, and how it is SPELLED: `own` / `parent` / `ancestors` / `children` / `siblings` / `descendants`, plus `modifiers` (`["export", "abstract", "const"]` — the words as written, for every kind of declaration), `decorators` (`[{ name, full, line }]`), `assertion` (`as const` / `satisfies X`) and `disposable` (`using`) |
 | `name`, `kind`, `role` | what it is CALLED, what it IS, and the role it got |
 
-Plus, for a declaration: `exported` (is it written with `export`), `mutable` (may the binding be reassigned — `let`/`var`), `decorators`, `extends`, `implements`, `members`, `constructorParams` for classes, and `file` (the facts of the file it lives in, so a role can ask `{ file: { imports: { any: { source: … } } } }` — "this function depends on the IDE API, so it is a host adapter, not a helper").
+Plus, for a declaration: `exported` (is it written with `export`), `mutable` (may the binding be reassigned — `let`/`var`), `extends`, `implements`, `members`, `constructorParams` for classes, `references` / `implementations` (the checker's answer, not the tree's), and `file` (the facts of the file it lives in, so a role can ask `{ file: { imports: { any: { source: … } } } }` — "this function depends on the IDE API, so it is a host adapter, not a helper").
 
 Everything a piece DOES is a **relation** (`entities/kinds.js`), and the eight relations are the whole vocabulary: `import`, `export`, `declare`, `call`, `mutate`, `assign`, `read`, `typeImport`. There is no second way to say "it writes" or "it is exported".
 
@@ -439,6 +439,113 @@ the permissive ones (examples, tests) last.
 When the architecture genuinely has no answer (a role with no declared home, in
 a folder the tree does not declare), the finding says exactly that and names the
 single edit that gives it one — it does not offer an "either … or".
+
+### Where the wording lives — `report/errorTypes/`
+
+The engine observes and decides **facts**. The report turns facts into
+**language**, once, for every consumer (the CLI text, the linter message, the
+interactive overview). No module outside `report/errorTypes/` writes a sentence
+about a finding.
+
+```
+report/errorTypes/
+  index.js            public surface: describe(), renderToken(), ids
+  decision-maker.js   the only decision maker: which kind of finding, what to say,
+                      what can be done, and WHERE the code belongs
+  vocabulary/
+    ids.js            the ids both sides use (the report and the picture)
+    verbs.js          "imports" / "import" / "mutation"
+    phrases.js        a fact → a phrase, a subject, a reason
+    places.js         role → box, name → node, a role's declared home
+  types/
+    wrongAction.js    a relation the architecture forbids
+    wrongPlacement.js the code is in the wrong place (move, or split)
+    unknownRole.js    nothing declares this kind of code here
+    fileContents.js   the finding judges the file itself
+  codes/
+    structure.js      structure.* — "this entry does not belong in this folder"
+```
+
+### Where a move goes — `decision-maker.js` → `decide()`
+
+A destination is a **decision**, not a lookup: it is decided by the **code role**
+and confirmed by the tree. The percentage is a `0..1` confidence:
+
+| Source | Question it answers | Weight |
+|---|---|---|
+| `declared` | does the tree call this file that role (its owner node's roles)? | 0.45 |
+| `inferred` | did the engine infer that role from the code itself? | 0.30 |
+| `named` | does a home of that role name this file? | 0.13 |
+| `hostable` | can a real node instance host that home today? | 0.07 |
+| `branch` | is that home in the file's own top branch? | 0.05 |
+
+`permits` is **not** a weight — it is a **gate**: the rule is "everything not
+allowed is forbidden", so a place where the relation is still forbidden is not a
+destination at all, whatever the other signals say. A permission says the move
+would be legal; it never says the move is right (`testCode` may call an action,
+and that says nothing about where production code belongs).
+
+A candidate also needs a known code role (`declared` or `inferred`) and at least
+two sources (`MIN_EVIDENCE`) with **confidence ≥ 0.5**. When nothing qualifies,
+no move is offered — the finding's repair is the removal, which is the honest
+answer for "this role may not do this here".
+
+One output format for every candidate, so the text and the picture read the
+same numbers:
+
+```js
+{ role, node, path, confidence, tier, reason, signals, contributions,
+  evidence, thresholds, weights }
+```
+
+Each type answers three questions and nothing else:
+
+| Export | Question |
+|---|---|
+| `classify(ctx, places)` | is this finding of my kind, and what are the facts? |
+| `message(story, ctx)` | the sentence to print — `null` keeps the engine's |
+| `fixes(story, ctx)` | **a list** of repairs, cheapest first |
+
+`fixes` is always a list because a broken rule usually has more than one honest
+answer. A forbidden relation, for example, can be repaired by removing the
+usage, by moving the code into a role that may do it, or by widening the rule in
+the architecture — printing only the first one is how a report ends up saying
+"Delete it." about a file that is perfectly placed.
+
+**The engine emits tokens, not prose.** A refused relation travels as
+
+```js
+{ code: "relation.forbidden",
+  fact: { kind: "typeImport", resolved: "…/document/type.ts" },
+  subject: { pieces: [], roles: ["constants"], plural: false },
+  why: { code: "allowed", roles: ["storeModel", …], targetNode: "sharedTypes" },
+  via: null }
+```
+
+`phrases.js` renders the sentence from it, `wrongAction.js` renders the
+repairs, the picture renders the arrow. The node→node edges carry the same
+structured `fact` (no words), so the AST layer cannot disagree with the report
+about what the code did.
+
+`report/user-report/src/graph/` is the picture side, one representation per id —
+`representation/wrongAction.js` (one crossed-out arrow, no marks on the boxes),
+`wrongPlacement.js` (✕ here, ✓ there), `unknownRole.js` (one crossed box),
+`fileContents.js` (the box, unmarked). `graph/decision.js` picks the one that
+draws the story; `graph/ids.js` and `graph/words.js` import the ids and the
+verbs from `report/errorTypes/`, so a label can never drift from a sentence.
+
+### The modules, in one table
+
+| Path | What it owns |
+|---|---|
+| `entities/ast/` | reading code: imports, calls, writes, declarations → **facts** |
+| `entities/kinds.js` | a fact → an **edge** (`{ path, line, piece, role, fact, what }`) |
+| `entities/tree/` | **where** files may live: `build.js` (nodes → path variants + role homes), `match.js` (a path → its node, and whether that node is real there), `entries.js` (walking a path, reporting undeclared entries) |
+| `nodes/` | `children.js`, `homes.js` (where a role lives), `similar.js` |
+| `nodes/finally/` | the built-in structure rule, four questions in four files: `required.js` (is this folder an instance of its node?), `queries.js` (does this file match a child's query?), `relations.js` (does this file reach code it may not?), `emit.js` (one finding per decision) |
+| `report/errorTypes/` | **the words**: message, repairs, and the ids the picture uses |
+| `report/user-report/` | the interactive overview: data → JSON → React |
+
 
 ### `--overview` (interactive HTML)
 

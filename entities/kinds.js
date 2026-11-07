@@ -1,35 +1,12 @@
 "use strict";
 
-// What the engine can SEE: the closed vocabulary of file→file relations, and
-// one producer per relation that turns raw AST facts into that relation.
+// The closed vocabulary of file→file relations: one producer per relation,
+// turning raw AST facts into `{ path, line, piece, role, what }` edges.
+// Whether an edge is allowed is the owning role's business (nodes/finally.js).
 //
-// Nothing in here is a verdict. ast/ observes what a piece of code contains
-// (imports, calls, assignments, declarations); this file answers one question
-// about those observations — "which OTHER file does this piece touch, and how?"
-// — as `{ path, line, piece, role, what }` edges. Whether an edge is allowed is
-// decided by the role that owns the piece (nodes/finally.js), compared through
-// the one filter engine in entities/queries.js.
-//
-// The eight relations are the whole vocabulary, one per thing code can do to
-// code it does not own: bring it in (`import`), hand it out (`export`), put a
-// name on it (`declare`), run it (`call`), change it (`mutate`), write into its
-// own value (`assign`), look at it (`read`), and name it as a type
-// (`typeImport`).
-//
-// `declare` is EVERY declaration: `const`, `let`, `var`, `function`, `class`, and
-// a re-declaration that only renames somebody else's value (`const a = b.c`,
-// `const f = () => g()`). `export` is every way code leaves the module.
-// `import` is not only the `import` statement: `require(…)` / `import(…)` inside
-// a function is a dependency of THAT PIECE of code, so its edge names the piece.
-// `assign` and `mutate` are the same fact seen twice: a write that stays inside
-// the piece is an `assign`, a write that lands in somebody else's value is a
-// `mutate` — the role that owns the written value decides.
-//
-// The list lives here, outside `utils/`, because it is a CONTRACT between four
-// parts of the engine (ast/ produces the facts, this file turns them into
-// edges, code-roles/roles.js validates `of:`, nodes/finally.js enforces the
-// rule) and because a config points at it directly (`of: call`). A helper may
-// change freely; a contract may not.
+// The list is a CONTRACT: ast/ produces the facts, this file turns them into
+// edges, code-roles/roles.js validates `of:`, nodes/finally.js enforces.
+// A `call` also carries `with` — the arguments whose type a repo file declares.
 
 const FACT_KINDS = ["import", "export", "declare", "call", "mutate", "assign", "read", "typeImport"];
 
@@ -58,7 +35,16 @@ const callsOf = (facts) =>
 			// CODE that makes the edge — a role belongs to a function or a variable,
 			// never to the file: one file holds an action AND a view, and each is
 			// judged by its own role.
-			.map((call) => ({ path: call.module, line: lineOf(c), action: call.action, piece: c.name ?? null, role: roleOfPiece(facts, c.name), what: `calls \`${call.action}\` of \`${call.module}\`` })),
+			.map((call) => ({
+				path: call.module,
+				line: lineOf(c),
+				action: call.action,
+				piece: c.name ?? null,
+				role: roleOfPiece(facts, c.name),
+				// `with`: what the call is given, by the file that declares each type.
+				fact: { kind: "call", action: call.action ?? null, module: call.module, with: call.arguments ?? [] },
+				what: `calls \`${call.action}\` of \`${call.module}\``,
+			})),
 	);
 
 // Reading another module's value without invoking it: `requireRootStore().settings`,
@@ -66,7 +52,14 @@ const callsOf = (facts) =>
 // somebody else. A call is NOT a read (it has its own relation), and neither is
 // a write target (`f().x = …` is a `mutate`), so the three never overlap.
 const readsOf = (facts) =>
-	(facts.reads ?? []).map((r) => ({ path: r.module, line: r.line ?? 1, piece: r.piece ?? null, role: roleOfPiece(facts, r.piece), what: `reads \`${r.what}\` of \`${r.module}\`` }));
+	(facts.reads ?? []).map((r) => ({
+		path: r.module,
+		line: r.line ?? 1,
+		piece: r.piece ?? null,
+		role: roleOfPiece(facts, r.piece),
+		fact: { kind: "read", what: r.what ?? null, module: r.module },
+		what: `reads \`${r.what}\` of \`${r.module}\``,
+	}));
 
 // EVERY write, split by the RELATION it forms — the split itself lives on the
 // fact (`assignments[].relation`, ast/assignments.js), so the edge producers and
@@ -80,6 +73,9 @@ const assignmentsOf = (facts, { mutate }) =>
 				line: a.line ?? lineOf(c),
 				piece: c.name ?? null,
 				role: roleOfPiece(facts, c.name),
+				// THE FACT — what the code did, as data. Every word about it is
+				// written by `report/errorTypes/phrases.js`.
+				fact: { kind: mutate ? "mutate" : "assign", target: a.target ?? null, module: a.module ?? null, method: a.method ?? null, onThis: Boolean(a.onThis) },
 				what: mutate
 					? a.onThis
 						? `changes \`${a.target}\` of its own file`
@@ -103,6 +99,7 @@ const EDGE_FACTS = {
 				line: imp.line ?? 1,
 				piece: imp.piece ?? null,
 				role: roleOfPiece(facts, imp.piece),
+				fact: { kind: "import", form: imp.form ?? null, source: imp.source ?? null, resolved: imp.resolved },
 				what: imp.form === "statement" ? `imports \`${imp.resolved}\`` : `requires \`${imp.source}\``,
 			})),
 	// `import type … from "x"` — a TYPE dependency. Split from `import` because
@@ -112,7 +109,14 @@ const EDGE_FACTS = {
 	typeImport: (facts) =>
 		(facts.imports ?? [])
 			.filter((imp) => imp.resolved && imp.typeOnly)
-			.map((imp) => ({ path: imp.resolved, line: imp.line ?? 1, piece: imp.piece ?? null, role: roleOfPiece(facts, imp.piece), what: `names a type of \`${imp.resolved}\`` })),
+			.map((imp) => ({
+				path: imp.resolved,
+				line: imp.line ?? 1,
+				piece: imp.piece ?? null,
+				role: roleOfPiece(facts, imp.piece),
+				fact: { kind: "typeImport", source: imp.source ?? null, resolved: imp.resolved },
+				what: `names a type of \`${imp.resolved}\``,
+			})),
 	// EVERY way code leaves the module, whatever the spelling.
 	// The piece the edge belongs to is the piece that is published; a statement
 	// outside any piece (`export * from "x"`) is answered for by the module scope.
@@ -123,6 +127,21 @@ const EDGE_FACTS = {
 			// A re-export publishes ANOTHER module's binding; a named export
 			// publishes a local one.
 			const piece = exp.piece ?? (exp.from || names.length !== 1 ? null : pieceFor(names[0]));
+			// THE FACT of the export, with no sentence in it: form + what it
+			// publishes. `report/errorTypes/phrases.js` turns it into "exports
+			// `a`, `b`" / "re-exports `x` as `y`" / … — the branch you are
+			// reading right now used to live in five nested ternaries HERE.
+			const fact = {
+				kind: "export",
+				form: exp.form ?? "named",
+				names,
+				name: exp.name ?? null,
+				source: exp.source ?? null,
+				// The RESOLVED module a re-export publishes from: a sentence needs a
+				// path a reader can open, not an import specifier.
+				resolved: exp.from ?? null,
+				reExport: Boolean(exp.from),
+			};
 			const what =
 				exp.form === "named" && !exp.from
 					? names.length
@@ -140,13 +159,20 @@ const EDGE_FACTS = {
 										? `exports \`${exp.name}\` through CommonJS`
 										: "is exported through CommonJS";
 
-			return { path: exp.from ?? facts.location.path, line: exp.line ?? 1, piece, role: roleOfPiece(facts, piece), what };
+			return { path: exp.from ?? facts.location.path, line: exp.line ?? 1, piece, role: roleOfPiece(facts, piece), fact, what };
 		});
 		// `export const x = …` / `export function f` — a declaration modifier, with
 		// no statement to find it on.
 		const declared = (facts.candidates ?? [])
 			.filter((c) => c.exported)
-			.map((c) => ({ path: facts.location.path, line: lineOf(c), piece: c.name ?? null, role: roleOfPiece(facts, c.name), what: "is exported" }));
+			.map((c) => ({
+				path: facts.location.path,
+				line: lineOf(c),
+				piece: c.name ?? null,
+				role: roleOfPiece(facts, c.name),
+				fact: { kind: "export", form: "declared", names: c.name ? [c.name] : [], name: c.name ?? null, source: null, reExport: false },
+				what: "is exported",
+			}));
 
 		return [...fromFacts, ...declared];
 	},
@@ -166,6 +192,7 @@ const EDGE_FACTS = {
 				line: lineOf(c),
 				piece: c.name ?? null,
 				role: roleOfPiece(facts, c.name),
+				fact: { kind: "declare", renames: renames ? { action: renames.action ?? null, module: renames.module } : null },
 				// A phrase that reads after the subject: "`f` <what>".
 				what: renames ? `re-declares \`${renames.action}\` of \`${renames.module}\`` : "is declared here",
 			};

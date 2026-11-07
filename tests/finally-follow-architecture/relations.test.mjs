@@ -32,7 +32,7 @@ const ARCH = JSON.stringify({
 		},
 		{
 			slug: "entry",
-			infer: [{ name: { globMatches: "entry*" } }],
+			infer: [{ name: { matches: "entry*" } }],
 			actions: {
 				declare: { where: ["**/*.ts"] },
 				export: { where: ["**/*.ts"] },
@@ -42,7 +42,7 @@ const ARCH = JSON.stringify({
 		},
 		{
 			slug: "helper",
-			infer: [{ name: { globMatches: "helper*" } }],
+			infer: [{ name: { matches: "helper*" } }],
 			actions: { declare: { where: ["**/*.ts"] }, export: { where: ["**/*.ts"] } },
 		},
 	],
