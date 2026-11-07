@@ -1,6 +1,6 @@
 {
   "name": "@md-code/follow-architecture",
-  "version": "0.1.12-beta.2",
+  "version": "0.1.13-beta.1",
   "description": "ESLint rule + CLI that enforces a declarative architecture: where files may live, what they may be named, and what they may contain.",
   "license": "Apache-2.0",
   "author": "DrBoria <dr.boria@gmail.com>",
@@ -45,14 +45,19 @@
   },
   "dependencies": {
     "@typescript-eslint/parser": "^8.71.0",
+    "css-tree": "^3.2.1",
     "esbuild": "^0.25.12",
     "highlight.js": "^11.12.0",
     "js-yaml": "^5.4.2",
     "minimatch": "^9.0.4",
+    "postcss": "^8.5.32",
+    "postcss-selector-parser": "^7.1.7",
+    "postcss-value-parser": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "remeda": "^2.50.0",
     "styled-components": "^6.6.0",
+    "stylis": "^4.4.0",
     "ts-morph": "^24.0.0"
   },
   "peerDependencies": {

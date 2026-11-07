@@ -11,6 +11,9 @@ const { buildInvariants } = require("./invariants");
 const { enrichFindings } = require("./findings");
 const { buildFileTree } = require("./file-tree");
 const { buildAccessGraph } = require("./graph");
+const { buildCss } = require("./css");
+const { buildFrameworks } = require("./frameworks");
+const { buildFrameworkFolder } = require("./framework-folder");
 
 const countBy = (list, keyFn) => {
 	const map = new Map();
@@ -29,6 +32,12 @@ const collectOverviewData = ({ arch, findings, orphans, files, repoFiles, repoRo
 	// Folder→folder arrows, derived from the role actions. This is what the
 	// Graph screen draws and what the tree highlights.
 	const access = buildAccessGraph({ arch, nodes, findings: enriched });
+	// Two FACET readings of the same files. They are computed here, next to the
+	// nodes, because the folder screen needs both the framework rows and the
+	// engine's own node resolution.
+	const css = buildCss({ files });
+	const frameworks = buildFrameworks({ files });
+	const frameworkFolder = buildFrameworkFolder({ components: frameworks.components, arch });
 
 	return {
 		meta: {
@@ -51,6 +60,10 @@ const collectOverviewData = ({ arch, findings, orphans, files, repoFiles, repoRo
 			filesWithFindings: new Set(enriched.map((f) => f.file)).size,
 			edges: access.edges.length,
 			orphans: (orphans ?? []).length,
+			cssFiles: css.totals.files,
+			cssLiterals: css.totals.literals,
+			components: frameworks.totals.components,
+			drilled: frameworks.totals.drilled,
 		},
 		nodes,
 		access,
@@ -58,6 +71,9 @@ const collectOverviewData = ({ arch, findings, orphans, files, repoFiles, repoRo
 		invariants,
 		findings: enriched,
 		fileTree: buildFileTree({ files, arch, findings: enriched }),
+		css,
+		frameworks,
+		frameworkFolder,
 		groups: {
 			byCategory: countBy(enriched, (f) => f.category),
 			byInvariant: countBy(enriched, (f) => f.invariant ?? "structure"),

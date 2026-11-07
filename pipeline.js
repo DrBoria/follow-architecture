@@ -10,6 +10,9 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { toRel } = require("./utils/imports");
 const { createTsProject, loadSourceFile, collectCandidates, collectFileFacts, importNameModules } = require("./entities/ast");
+const { attachToCandidates: attachCssFacts } = require("./css");
+const { attachClasses: attachTailwindFacts } = require("./css/tailwind");
+const { enrich: attachFrameworkFacts } = require("./frameworks");
 const { attachCallDepth } = require("./entities/ast/depth");
 
 const { classifyRoles } = require("./code-roles/classify");
@@ -68,6 +71,13 @@ const checkFile = (abs, arch, project, repoFiles, dedupe) => {
 		repoFiles,
 		cache: (arch.depthCache ??= { memo: new Map(), files: new Map() }),
 	});
+
+	// Framework and style READINGS of the same AST: attached to the candidates
+	// before classification, so a code role can be defined on them exactly like on
+	// `kind`. Both are optional namespaces — a plain `.ts` file gets neither.
+	attachFrameworkFacts(candidates, { rel: ctx.rel, sf, text, repoRoot: arch.repoRoot ?? ctx.repoRoot });
+	attachCssFacts(candidates, { sf });
+	attachTailwindFacts(candidates, { sf });
 
 	// The file's facts are needed BEFORE classification — a role may be
 	// recognised by what the file depends on (`file.imports`), not only by the
