@@ -15,15 +15,17 @@
 // second key would be a second way to say one thing.
 
 const { parseWhere, matchesWhere, toList } = require("../entities/location");
+const { SCHEMA } = require("../entities/schema");
+const configError = require("../report/configErrors");
 
 // Every key an invariant may carry — anything else is a declaration the config
 // believes it made, so it fails loudly instead of doing nothing.
-const INVARIANT_KEYS = new Set(["id", "where", "ignore", "when", "infer", "report", "dedupeBy", "children"]);
+const INVARIANT_KEYS = new Set(SCHEMA.invariant);
 
 const checkKeys = (raw) => {
 	for (const key of Object.keys(raw)) {
 		if (INVARIANT_KEYS.has(key)) continue;
-		throw new Error(`invariant ${raw.id}: \`${key}\` is not a key — an invariant is ${[...INVARIANT_KEYS].join(", ")}`);
+		throw configError.unknownInvariantKey({ id: raw.id, key, allowed: SCHEMA.invariant });
 	}
 };
 
@@ -35,7 +37,7 @@ const parseDedupe = (raw, roles) => {
 	for (const entry of entries) {
 		if (entry.type !== "glob") continue;
 		if (!entry.glob.includes("/") && !entry.glob.includes("*")) {
-			throw new Error(`invariant: \`dedupeBy: ${entry.glob}\` is not a place — use a \`where\` entry (\`{ node: <slug> }\`, a glob, or a filter)`);
+			throw configError.dedupeByNotAPlace({ value: entry.glob });
 		}
 	}
 	return entries;
@@ -45,8 +47,8 @@ const parseDedupe = (raw, roles) => {
 // role is read as a role reference instead of a glob — the same rule the
 // code-role actions follow.
 const normalizeInvariant = (raw, roles = null) => {
-	if (!raw || typeof raw !== "object") throw new Error("invariant: expected an object");
-	if (!raw.id) throw new Error("invariant: missing id");
+	if (!raw || typeof raw !== "object") throw configError.invariantNotAnObject();
+	if (!raw.id) throw configError.invariantWithoutId();
 	checkKeys(raw);
 	return {
 		id: String(raw.id),

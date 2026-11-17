@@ -1,3 +1,4 @@
+const configError = require("../report/configErrors");
 "use strict";
 
 // Glob → regex and the naming-convention placeholder machinery shared by
@@ -143,7 +144,7 @@ const checkRegex = (p, where) => {
 	try {
 		new RegExp(p);
 	} catch (err) {
-		throw new Error(`${where}: invalid pattern \`${p}\` — ${err.message}`);
+		throw configError.invalidPattern({ where, pattern: p, reason: err.message });
 	}
 };
 

@@ -212,7 +212,7 @@ describe("invariants — checks", () => {
 
 describe("invariants — normalize", () => {
 	it("requires an id", () => {
-		expect(() => normalizeInvariant({})).toThrow(/missing id/);
+		expect(() => normalizeInvariant({})).toThrow(/needs an `id`/);
 	});
 
 	it("defaults where/ignore/rule/children", () => {
@@ -236,19 +236,19 @@ describe("invariants — normalize", () => {
 
 describe("invariants — declared keys", () => {
 	it("a key the entity does not have fails loudly instead of doing nothing", () => {
-		expect(() => normalizeInvariant({ id: "x", forbid: [] })).toThrow(/`forbid` is not a key/);
-		expect(() => normalizeInvariant({ id: "x", except: [] })).toThrow(/`except` is not a key/);
+		expect(() => normalizeInvariant({ id: "x", forbid: [] })).toThrow(/`x\.forbid` is not a key/);
+		expect(() => normalizeInvariant({ id: "x", except: [] })).toThrow(/`x\.except` is not a key/);
 	});
 
 	it("an unknown key is an error, not a silent no-op", () => {
-		expect(() => normalizeInvariant({ id: "x", dedupe: "dir" })).toThrow(/`dedupe` is not a key/);
+		expect(() => normalizeInvariant({ id: "x", dedupe: "dir" })).toThrow(/`x\.dedupe` is not a key/);
 	});
 
 	it("the error lists the keys the entity does have", () => {
-		expect(() => normalizeInvariant({ id: "x", must: [{ lines: { lt: 9 } }] })).toThrow(/`must` is not a key — an invariant is id, where, ignore, when, infer, report, dedupeBy, children/);
+		expect(() => normalizeInvariant({ id: "x", must: [{ lines: { lt: 9 } }] })).toThrow(/`x\.must` is not a key — an invariant is `id`, `where`, `ignore`, `when`, `infer`, `report`, `dedupeBy`, `children`/);
 	});
 
 	it("`rule` is not a key — `infer` is the one filter language", () => {
-		expect(() => normalizeInvariant({ id: "x", rule: [] })).toThrow(/`rule` is not a key/);
+		expect(() => normalizeInvariant({ id: "x", rule: [] })).toThrow(/`x\.rule` is not a key/);
 	});
 });

@@ -10,36 +10,31 @@ const { normalizeInvariant } = require("./invariants/normalize");
 const { normalizeAliases } = require("./aliases");
 const { checkFile } = require("./pipeline");
 const { DEFAULT_EXTS, DEFAULT_IGNORE_DIRS } = require("./utils/pattern");
-const { renderReport } = require("./report/cli-report");
+const { renderReport, renderNotices } = require("./report/cli-report");
+const { takeNotices } = require("./report/notices");
 const { collectOverviewData, writeOverview } = require("./report/user-report");
 const { toRel } = require("./utils/imports");
 const { collectFiles } = require("./utils/files");
 const { parseArgs } = require("./args");
+const configError = require("./report/configErrors");
 const yaml = require("js-yaml");
-
-// An architecture file is JSON or YAML — the extension does not matter, the
-// content decides. A JSON file is valid YAML, so one parser covers both.
-const parseArchitectureText = (text, file) => {
-	if (/\.json$/i.test(file)) return JSON.parse(text);
-	return yaml.load(text, { filename: file });
-};
 
 // The name the findings should tell the reader to edit: whatever file this
 // architecture actually came from — `architecture.yaml` is a default, not a law.
 const buildArchitecture = (raw, source = null) => {
-	if (!raw || typeof raw !== "object") throw new Error("architecture: expected an object");
+	if (!raw || typeof raw !== "object") throw configError.notAnObject();
 	const nodeList = Array.isArray(raw.nodes) ? raw.nodes : raw.nodes ? Object.values(raw.nodes) : [];
-	if (!nodeList.length) throw new Error("architecture.nodes: must be a non-empty array or object");
+	if (!nodeList.length) throw configError.withoutNodes();
 	const codeRoles = raw.codeRoles ? normalizeCodeRoles(raw.codeRoles) : {};
 	const tree = buildTree(raw.nodes);
 	const invariants = pipe(raw.invariants ?? [], map((i) => normalizeInvariant(i, new Set(Object.keys(codeRoles)))));
 	const ids = invariants.map((i) => i.id);
-	if (new Set(ids).size !== ids.length) throw new Error("architecture.invariants: ids must be unique");
+	if (new Set(ids).size !== ids.length) throw configError.duplicateInvariantIds(ids);
 	// A node says WHERE code lives, so the role it names has to exist — a typo
 	// would otherwise give a home to a role nothing ever infers.
 	const known = new Set(Object.keys(codeRoles));
 	for (const role of Object.keys(tree.roleHomes)) {
-		if (!known.has(role)) throw new Error(`nodes: \`role: ${role}\` names no codeRole — the node gives a home to code the config never describes`);
+		if (!known.has(role)) throw configError.nodeRoleUnknown(role);
 	}
 	const arch = {
 		nodes: tree,
@@ -52,15 +47,54 @@ const buildArchitecture = (raw, source = null) => {
 	return arch;
 };
 
-const loadArchitecture = (config) => {
-	if (typeof config === "string") {
-		const p = path.resolve(process.cwd(), config);
-		const text = fs.readFileSync(p, "utf8");
-		if (p.endsWith(".js") || p.endsWith(".cjs")) return buildArchitecture(require(p), p);
-		return buildArchitecture(parseArchitectureText(text, p), p);
+// An architecture file is DATA — YAML or JSON. JSON is valid YAML, so the
+// extension decides nothing and there is ONE parser: a second path keyed on
+// `.js`/`.cjs` meant `require`-ing the config, which cannot work for `.mjs`, does
+// not exist for `.ts`, and reads a file's text only to throw it away.
+const parseArchitecture = (text, file) => {
+	try {
+		return yaml.load(text, { filename: file });
+	} catch (error) {
+		throw configError.unparseable({ reason: describeParse(error) });
 	}
+};
+
+// Where the file itself is wrong — a missing comma, a tab used as indentation.
+// The parser knows the position; the reader needs it, so it travels in the
+// sentence.
+const describeParse = (error) => {
+	const reason = String(error.reason ?? error.message ?? error).split("\n")[0];
+	const at = error.mark ? ` (line ${error.mark.line + 1}, column ${error.mark.column + 1})` : "";
+	return `${reason}${at}`;
+};
+
+// Every failure between "here is a path" and "here is a usable architecture"
+// happens inside ONE call, so the file is named in ONE place: the sentence says
+// what the key claims, but only the path says which architecture to open. A
+// config error stays a sentence; a bug keeps its stack and never pretends to be
+// about the config.
+const naming = (file, run) => {
+	try {
+		return run();
+	} catch (error) {
+		if (error && error.isConfigError) error.message = `${error.message}\n  in ${file}`;
+		throw error;
+	}
+};
+
+const loadArchitecture = (config) => {
 	if (config && typeof config === "object" && typeof config.file === "string") return loadArchitecture(config.file);
-	return buildArchitecture(config);
+	if (typeof config !== "string") return buildArchitecture(config);
+	const file = path.resolve(process.cwd(), config);
+	return naming(file, () => {
+		let text;
+		try {
+			text = fs.readFileSync(file, "utf8");
+		} catch (error) {
+			throw configError.unreadable({ code: error.code });
+		}
+		return buildArchitecture(parseArchitecture(text, file));
+	});
 };
 
 const main = (argv) => {
@@ -69,8 +103,14 @@ const main = (argv) => {
 		console.log("usage: follow-architecture [--config <path>] [--ext <.ext>]... [--ignore <glob>]... [--ignore-dir <name>]... [--files <path>]... [--out <path>] [--overview [path]] [--check]");
 		return 0;
 	}
-	const repoRoot = path.resolve(args.cwd ?? process.cwd());
-	const arch = loadArchitecture(args.config);
+	const cwd = path.resolve(args.cwd ?? process.cwd());
+	// The repo starts where the architecture file is — the SAME anchor the ESLint
+	// rule uses — so `--config ../arch.yaml` scans the repo that file describes,
+	// instead of resolving it against the shell's cwd and rebuilding the tree from
+	// the wrong folder. An explicit `--cwd` still decides where the scan begins.
+	const configPath = typeof args.config === "string" ? path.resolve(cwd, args.config) : args.config;
+	const repoRoot = typeof configPath === "string" && args.cwd == null ? path.dirname(configPath) : cwd;
+	const arch = loadArchitecture(configPath);
 	arch.repoRoot = repoRoot;
 	const shouldCheck = matchers(arch);
 	// Scan scope is the TOOL's: its defaults, extended by `--ext`, never by the
@@ -114,15 +154,18 @@ const main = (argv) => {
 			files: repoFiles,
 			repoFiles,
 			repoRoot,
-			architecturePath: typeof args.config === "string" ? path.resolve(repoRoot, args.config) : null,
+			architecturePath: typeof configPath === "string" ? configPath : null,
 			project,
 		});
 		const written = writeOverview(data, path.resolve(repoRoot, args.overview));
 		console.log(`wrote ${path.relative(repoRoot, written.path)} (${findings.length} findings, ${Math.round(written.bytes / 1024)} kB)`);
+		const caveats = renderNotices(takeNotices());
+		if (caveats) console.log(caveats);
 		return args.check && findings.length > 0 ? 1 : 0;
 	}
 
-	const text = renderReport(findings, repoRoot, { orphans });
+	const rewritten = renderReport(findings, repoRoot, { orphans });
+	const text = `${rewritten}${renderNotices(takeNotices())}`;
 	if (args.out) {
 		fs.writeFileSync(args.out, text);
 		console.log(`wrote ${args.out} (${findings.length} findings)`);

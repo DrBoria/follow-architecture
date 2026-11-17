@@ -147,4 +147,28 @@ const renderReport = (findings, repoRoot, { orphans = [] } = {}) => {
 	return lines.join("\n");
 };
 
-module.exports = {findingFrom, renderReport};
+// The notices a run collected: what the tool could NOT read, so the reader knows
+// an answer is partial. They print AFTER the findings — a finding is a demand, a
+// notice is a caveat about the analysis that produced it.
+const renderNotices = (notices) => {
+	if (!notices?.length) return "";
+	const lines = ["", `## Not read (${notices.length})`, ""];
+	for (const line of notices) lines.push(`- ${line}`);
+	lines.push("");
+	return lines.join("\n");
+};
+
+// A config the engine cannot use is a SENTENCE for the reader — they fix it by
+// editing a file — so the message (which already names the file) is the whole
+// output, and the exit code carries the failure.
+const renderConfigError = (error) => (error && error.message ? error.message : String(error));
+
+// Anything else is the engine failing at its own job: it keeps its stack, because
+// that is the only thing that makes the bug reportable, but the frame around it is
+// still the tool talking to the reader — so it is written here, not in `bin`.
+const renderCrashError = (error) => {
+	const detail = error && error.stack ? error.stack : String(error);
+	return `follow-architecture: the run failed for a reason that is not in the architecture\n${detail}`;
+};
+
+module.exports = {findingFrom, renderReport, renderNotices, renderConfigError, renderCrashError};

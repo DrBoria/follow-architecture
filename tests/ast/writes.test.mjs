@@ -99,3 +99,32 @@ describe("writes: a mutating method is a write, whatever the receiver is", () =>
 		expect(storeWrites(facts, "configure")).toHaveLength(1);
 	});
 });
+
+// `relation` is ONE word per write: whose value it lands in. Whether this line
+// writes it at all is the fact's own `performed` — set where the shape of the
+// write is recognised (`plainAssignments`, `collectMutations`, `taggedWrites`).
+describe("relationOf — the one word a write gets", () => {
+	const { relationOf } = require("../../entities/ast/assignments");
+	const rel = "src/app.ts";
+
+	it("a direct assignment into another module's value is a mutation", () => {
+		expect(relationOf({ via: "assign", performed: true, module: "src/store.ts" }, rel)).toBe("mutate");
+	});
+
+	it("a direct assignment into a parameter is a write into state handed in", () => {
+		expect(relationOf({ via: "assign", performed: true, param: true, type: "src/store.ts" }, rel)).toBe("assign");
+	});
+
+	it("a METHOD CALL on somebody else's value is the call, not a write by this piece", () => {
+		expect(relationOf({ via: "call", performed: false, module: "src/store.ts" }, rel)).toBe(null);
+	});
+
+	it("…but a method call on the piece's own parameter writes into it", () => {
+		expect(relationOf({ via: "call", performed: true, param: true, type: "src/store.ts" }, rel)).toBe("assign");
+	});
+
+	it("`this.x = …` is a mutation; this file's own object is nobody's business", () => {
+		expect(relationOf({ via: "assign", performed: true, onThis: true }, rel)).toBe("mutate");
+		expect(relationOf({ via: "assign", performed: true, type: rel }, rel)).toBe(null);
+	});
+});

@@ -18,6 +18,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { loadSourceFile, importNameModules, collectCandidates } = require("./index");
+const { notice } = require("../../report/notices");
 
 const depthOf = (rel, name, ctx, stack) => {
 	const key = `${rel}#${name}`;
@@ -63,9 +64,11 @@ const candidatesIn = (rel, ctx) => {
 		const sf = loadSourceFile(ctx.project, abs, fs.readFileSync(abs, "utf8"));
 		const importMap = importNameModules(sf, ctx.repoRoot, ctx.aliases ?? {}, ctx.repoFiles);
 		out = collectCandidates(sf, importMap, rel, ctx.repoRoot);
-	} catch {
+	} catch (error) {
 		// An unreadable file (generated, outside the project) has no chain: the
-		// fact is about code the tool can actually read.
+		// fact is about code the tool can actually read. The reason is reported, so
+		// a missing chain never passes for a shallow one.
+		notice(`the import chain of ${rel} could not be read`, error && error.message ? error.message : String(error));
 		out = [];
 	}
 	ctx.files.set(rel, out);

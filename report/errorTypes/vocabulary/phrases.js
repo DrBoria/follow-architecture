@@ -1,6 +1,8 @@
 "use strict";
 
 // Facts → words: a relation fact becomes a phrase, a subject and a reason.
+
+const { RELATION } = require("../../../entities/kinds");
 "use strict";
 
 // Facts → words. A relation fact (`{ kind, form, … }`) becomes a phrase.
@@ -35,11 +37,11 @@ const pluralize = (text) => {
 const factText = (fact) => {
 	if (!fact) return "does something the architecture does not describe";
 	switch (fact.kind) {
-		case "import":
+		case RELATION.IMPORT:
 			return fact.form === "statement" ? `imports ${q(fact.resolved)}` : `requires ${q(fact.source)}`;
-		case "typeImport":
+		case RELATION.TYPE_IMPORT:
 			return `names a type of ${q(fact.resolved)}`;
-		case "export": {
+		case RELATION.EXPORT: {
 			const names = fact.names ?? [];
 			if (fact.form === "namespace") return `re-exports ${q(fact.source)} as ${q(names[0] ?? fact.name)}`;
 			if (fact.form === "star") return `re-exports ${q(fact.source)}`;
@@ -55,22 +57,22 @@ const factText = (fact) => {
 			if (fact.name) return `exports ${q(fact.name)} through CommonJS`;
 			return "is exported through CommonJS";
 		}
-		case "declare":
+		case RELATION.DECLARE:
 			return fact.renames ? `re-declares ${q(fact.renames.action)} of ${q(fact.renames.module)}` : "is declared here";
-	case "call": {
+	case RELATION.CALL: {
 		// WHAT it was given: the value that made the call illegal. A built `.d.ts`
 		// names a shape, not a value with an owner, so it is left out.
 		const given = (fact.with ?? []).filter((w) => w.type && !w.type.endsWith(".d.ts")).map((w) => `${q(w.text)} of ${q(w.type)}`);
 
 		return `calls ${q(fact.action)} of ${q(fact.module)}${given.length ? ` with ${given.join(", ")}` : ""}`;
 	}
-		case "mutate":
+		case RELATION.MUTATE:
 			if (fact.onThis) return `changes ${q(fact.target)} of its own file`;
 			if (fact.ownerRole) return `changes ${q(fact.target)} of the ${q(fact.ownerRole)} (${q(fact.module)})`;
 			return `changes ${q(fact.target)} of ${q(fact.module)}`;
-		case "assign":
+		case RELATION.ASSIGN:
 			return `writes into ${q(fact.target)}${fact.method ? ` through ${q(`${fact.method}()`)}` : ""}`;
-		case "read":
+		case RELATION.READ:
 		return `reads ${q(fact.what)}${fact.module ? ` of ${q(fact.module)}` : ""}`;
 	default:
 			return `does a \`${fact.kind}\` the architecture does not describe`;

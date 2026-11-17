@@ -17,6 +17,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { notice } = require("../report/notices");
 
 const { DEFAULT_SIMILARITY, compilePattern } = require("../utils/pattern");
 const { loadSourceFile, importNameModules, collectCandidates } = require("../entities/ast");
@@ -57,7 +58,10 @@ const rolesInFolder = (ctx, folder) => {
 				const importMap = importNameModules(sf, ctx.repoRoot, ctx.aliases ?? {}, ctx.repoFiles);
 				const candidates = collectCandidates(sf, importMap, rel, ctx.repoRoot);
 				found = classifyRoles(candidates, ctx.arch?.codeRoles ?? {}, ctx.arch).present;
-			} catch {
+			} catch (error) {
+				// A file outside the project contributes no roles — and says why,
+				// because "no roles" and "could not look" are different answers.
+				notice(`the roles in ${rel} could not be read`, error && error.message ? error.message : String(error));
 				found = [];
 			}
 			cache.files.set(rel, found);

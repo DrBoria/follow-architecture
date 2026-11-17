@@ -13,19 +13,27 @@
 
 const path = require("node:path");
 const { ts } = require("ts-morph");
+const { notice } = require("../report/notices");
 
 const norm = (p) => String(p).replace(/\\/g, "/");
 
 const toRel = (repoRoot, filePath) => norm(path.relative(repoRoot, filePath));
 
-// The YAML `aliases` map says `alias → folder`, which is exactly what
-// TypeScript's `paths` expresses in two entries: the alias itself and its
+// The YAML `aliases` map says `alias → folder or entry file`, which is exactly
+// what TypeScript's `paths` expresses in two entries: the alias itself and its
 // subpaths (`alias/x` → `folder/x`).
+//
+// An alias that names a FILE (`"@md/styles": packages/styles/index.ts`) is the
+// common case, and its subpaths go through that file's DIRECTORY: `index.ts/*`
+// names a folder that cannot exist, so `@md/styles/themes/viking` never resolved
+// and the checker failed on it later.
+const ENTRY_FILE = /\.[cm]?[jt]sx?$/;
 const pathsOf = (aliases) => {
 	const paths = {};
-	for (const [alias, dir] of Object.entries(aliases ?? {})) {
-		paths[alias] = [dir];
-		paths[`${alias}/*`] = [`${dir}/*`];
+	for (const [alias, target] of Object.entries(aliases ?? {})) {
+		paths[alias] = [target];
+		const base = ENTRY_FILE.test(target) ? target.replace(/\/[^/]*$/, "") : target;
+		paths[`${alias}/*`] = [`${base}/*`];
 	}
 
 	return paths;
@@ -61,7 +69,12 @@ const resolutionHost = (project, repoRoot, repoFiles) => {
 		readFile: (p) => {
 			try {
 				return files.readFileSync(p);
-			} catch {
+			} catch (error) {
+				// The resolver PROBES paths, so a missing file is an answer, not a
+				// failure. Any other reason is reported: that file exists and is
+				// unreadable, which changes what the analysis knows.
+				if (error?.code !== "ENOENT") notice(`the file ${p} could not be read`, error && error.message ? error.message : String(error));
+
 				return undefined;
 			}
 		},

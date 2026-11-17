@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { minimatch } = require("minimatch");
 const { toRel } = require("./imports");
+const { notice } = require("../report/notices");
 
 // Absolute paths of every scanned file under `repoRoot`.
 const collectFiles = (repoRoot, { exts, ignoreDirs, ignoreGlobs }) => {
@@ -18,9 +19,12 @@ const collectFiles = (repoRoot, { exts, ignoreDirs, ignoreGlobs }) => {
 		let entries = [];
 		try {
 			entries = fs.readdirSync(dir, { withFileTypes: true });
-		} catch {
+		} catch (error) {
 			// An unreadable folder is not a scan error: the file list just does not
-			// include it (folder facts degrade, the rule still runs).
+			// include it (folder facts degrade, the rule still runs). The reason is
+			// reported, so a short list never looks like a complete one.
+			notice(`the folder ${dir} could not be read`, error && error.message ? error.message : String(error));
+
 			return;
 		}
 		for (const entry of entries) {

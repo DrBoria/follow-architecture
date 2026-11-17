@@ -40,6 +40,7 @@
 // invariant `when` gate uses, so every place in the plugin speaks one language.
 
 const { compilePattern } = require("../utils/pattern");
+const configError = require("../report/configErrors");
 const { matchesLocation } = require("./location");
 const { fieldOf } = require("../utils/field");
 
@@ -48,7 +49,7 @@ const isObj = (v) => v !== null && typeof v === "object" && !isList(v);
 
 // Operators that only make sense on a list value. `or` is NOT here — it is
 // a composition op that applies to any value (see matchScalar).
-const LIST_OPS = new Set(["length", "at", "every", "any", "none", "where"]);
+const LIST_OPS = new Set(["length", "at", "every", "any", "none", "where", "unique"]);
 
 // Operators that COMPOSE filters instead of addressing a fact. The matcher
 // reads this list, and so does anything that must look THROUGH a filter without
@@ -61,7 +62,7 @@ const COMPOSITION_OPS = new Set(["and", "or", "xor", "not"]);
 const KNOWN_OPS = new Set([
 	"equals", "not", "lt", "lte", "gt", "gte", "in", "notIn",
 	"contains", "startsWith", "endsWith", "isSet", "matches",
-	"length", "at", "every", "any", "none", "where", "or", "and", "xor", "not",
+	"length", "at", "every", "any", "none", "where", "unique", "or", "and", "xor", "not",
 	"isNull", "isEmpty",
 	"location",
 ]);
@@ -147,7 +148,7 @@ const matchScalar = (value, op, expected, scope) => {
 			// Exactly one: "either a factory or a generator, not both".
 			return isList(exp) && exp.filter((f) => matchFilter(value, f, scope)).length === 1;
 		default:
-			throw new Error(`queries: unknown operator \`${op}\``);
+			throw configError.unknownOperator({ op });
 	}
 };
 
@@ -192,7 +193,7 @@ const matchList = (value, op, expected, scope) => {
 			// name" are plain comparisons. `index` is the only key read here; the rest
 			// of the entry is the filter for the element.
 			const { index, ...by } = isObj(expected) ? expected : { index: expected };
-			if (typeof index !== "number") throw new Error("queries: `at` needs a numeric `index`");
+			if (typeof index !== "number") throw configError.atWithoutIndex();
 			const item = at(list, index);
 			// No such element is not a match: `{ at: { index: 5 } }` asks that the
 			// position EXISTS, and an empty filter would otherwise pass on `undefined`.
@@ -209,8 +210,20 @@ const matchList = (value, op, expected, scope) => {
 		case "where":
 			// { where: { filter: <narrowing filter>, by: <filter on narrowed list> } }
 			return matchFilter(hitOf(list, { where: { filter: expected.filter } }, scope), expected.by, scope);
+		case "unique": {
+			// { unique: { field: "line" } } — every entry has a DISTINCT value for
+			// `field`. The field is a field PATH (the same `fieldOf` the `$` refs
+			// use), so `location.ext`, `file.name` work. Values compare with the
+			// language's own identity (Set / SameValueZero): scalars strictly, objects
+			// by reference — name a SCALAR field to compare content.
+			// A generic sibling of `every` / `any` / `none`: "no two items share X".
+			const field = isObj(expected) ? expected.field : null;
+			const values = list.map((item) => (field ? fieldOf(item, field) : item));
+
+			return new Set(values).size === values.length;
+		}
 		default:
-			throw new Error(`queries: unknown list operator \`${op}\``);
+			throw configError.unknownListOperator({ op });
 	}
 };
 

@@ -29,8 +29,12 @@ const collectOverviewData = ({ arch, findings, orphans, files, repoFiles, repoRo
 	// Folder→folder arrows, derived from the role actions. This is what the
 	// Graph screen draws and what the tree highlights.
 	const access = buildAccessGraph({ arch, nodes, findings: enriched });
+	// CSS and framework facts are facts of a CANDIDATE, and a candidate is what a
+	// code role classifies: they travel with the role rows themselves, so no new
+	// section and no separate join is needed. `nodes`, `roles`, `invariants`,
+	// `findings` stay the only things the overview knows.
 
-	return {
+	const payload = {
 		meta: {
 			repoRoot,
 			repoName: path.basename(repoRoot),
@@ -64,6 +68,8 @@ const collectOverviewData = ({ arch, findings, orphans, files, repoFiles, repoRo
 			byNode: countBy(enriched, (f) => f.ownerNode ?? "—"),
 		},
 	};
+
+	return payload;
 };
 
 module.exports = { collectOverviewData };

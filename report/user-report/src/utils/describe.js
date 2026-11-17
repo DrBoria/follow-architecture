@@ -2,11 +2,9 @@
 // short readable lines. Same shape rules as the Node-side summarizer, kept
 // separate because it runs in the browser bundle.
 
-const CONTAINERS = new Set(["some", "every", "none", "length", "where", "filter", "by"]);
-// A quantifier says "one of them": it belongs to the path as `[*]`, not as a
-// field called `any`.
-const QUANTIFIERS = new Set(["some", "every", "none", "any"]);
-const OPS = { gt: ">", gte: "≥", lt: "<", lte: "≤", equals: "=", in: "in", not: "≠", isSet: "is set", matches: "matches" };
+import { CONTAINERS, QUANTIFIERS, SCALAR_OPS } from "../../../../entities/operators";
+
+const OPS = SCALAR_OPS;
 
 const fmt = (v) => (typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : JSON.stringify(v));
 

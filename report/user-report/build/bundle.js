@@ -23,6 +23,11 @@ const STAMP_FILE = path.join(CACHE_DIR, "stamp.json");
 
 // Every source file that ends up in the bundle, with the stat that tells
 // whether it changed. Sorted, so the stamp is stable across runs.
+// The bundle is not only `src/`: the operator vocabulary it prints comes from the
+// engine (`entities/operators.js`), and a cached bundle must be rebuilt when THAT
+// file changes too.
+const SHARED_SOURCES = [path.join(__dirname, "..", "..", "..", "entities", "operators.js")];
+
 const listSources = (dir) => {
 	const out = [];
 	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

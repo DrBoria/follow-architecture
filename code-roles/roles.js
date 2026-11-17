@@ -22,9 +22,11 @@
 
 const { parseWhere, toList } = require("../entities/location");
 const { FACT_KINDS } = require("../entities/kinds");
+const { SCHEMA } = require("../entities/schema");
+const configError = require("../report/configErrors");
 
 // Keys of a role that describe the role itself, not an action on it.
-const ROLE_KEYS = new Set(["slug", "name", "infer", "report", "actions"]);
+const ROLE_KEYS = new Set(SCHEMA.role);
 
 // `infer` entries: a bare string is a REFERENCE to another role ("this is code
 // that already got that role"), which is how roles compose.
@@ -33,20 +35,19 @@ const parseInfer = (entry) => (typeof entry === "string" ? { role: { equals: ent
 // What a chain root IS. `scope`, not `kind`: this entry describes a place code
 // is reached from, and `kind` already means "the ts-morph kind of a node"
 // everywhere else in the engine.
-const SCOPES = ["function", "object", "method"];
+const SCOPE = Object.freeze({ FUNCTION: "function", OBJECT: "object", METHOD: "method" });
+const SCOPES = Object.values(SCOPE);
 
 // One `scopeAccess` entry — what the root is, and how it is spelled:
 //   { scope: function, segments: [getRoot] }        `getRoot(self).x`
 //   { scope: object,   segments: [self, root] }     `self.root.x`
 //   { scope: method,   segments: [parent, get] }    `parent.get("n").x`
 const normalizeScopeAccessor = (e) => {
-	if (typeof e === "string") return { scope: "function", segments: [e] };
+	if (typeof e === "string") return { scope: SCOPE.FUNCTION, segments: [e] };
 	const scope = e?.scope;
-	if (!SCOPES.includes(scope)) {
-		throw new Error(`scopeAccess scope must be one of ${SCOPES.join(" | ")}, got ${JSON.stringify(scope)}`);
-	}
+	if (!SCOPES.includes(scope)) throw configError.scopeNotOneOf({ got: scope, allowed: SCOPES });
 	const segments = toList(e.segments).map(String);
-	if (!segments.length || segments.some((x) => !x)) throw new Error(`scopeAccess entry for scope "${scope}" needs a non-empty segments list`);
+	if (!segments.length || segments.some((x) => !x)) throw configError.emptyAccessorSegments({ scope });
 	return { scope, segments };
 };
 
@@ -63,7 +64,7 @@ const ACTION_KEYS = {
 	// without the engine knowing that vocabulary.
 	of: (value) => {
 		if (!FACT_KINDS.includes(value)) {
-			throw new Error(`codeRoles: action says \`of: ${value}\` — the fact layer produces ${FACT_KINDS.join(" | ")}`);
+			throw configError.unknownActionFact({ value, known: FACT_KINDS });
 		}
 		return String(value);
 	},
@@ -73,7 +74,7 @@ const ACTION_KEYS = {
 const normalizeAction = (name, spec, roles) => {
 	for (const key of Object.keys(spec)) {
 		if (!(key in ACTION_KEYS)) {
-			throw new Error(`codeRoles: action \`${name}.${key}\` is not an action key — use ${Object.keys(ACTION_KEYS).join(", ")}`);
+			throw configError.unknownActionKey({ name, key, allowed: Object.keys(ACTION_KEYS) });
 		}
 	}
 	const out = {};
@@ -92,8 +93,8 @@ const checkReferences = (roles) => {
 	for (const role of roles) {
 		for (const entry of toList(role.infer)) {
 			if (typeof entry !== "string") continue;
-			if (!bySlug.has(entry)) throw new Error(`codeRoles: \`${role.slug}\` infers by unknown role \`${entry}\``);
-			if (entry === role.slug) throw new Error(`codeRoles: \`${role.slug}\` infers by itself`);
+			if (!bySlug.has(entry)) throw configError.roleInfersUnknown({ role: role.slug, entry });
+			if (entry === role.slug) throw configError.roleInfersItself({ role: role.slug });
 		}
 	}
 	return roles;
@@ -109,8 +110,8 @@ const normalizeCodeRoles = (raw) => {
 		: Object.entries(raw).map(([k, v]) => (v && typeof v === "object" ? { ...v, slug: v.slug ?? k } : null));
 	if (defs.length === 0) return {};
 	for (const def of defs) {
-		if (!def || typeof def !== "object") throw new Error("codeRoles: each entry must be an object with a `slug`");
-		if (!def.slug) throw new Error("codeRoles: each entry needs a `slug`");
+		if (!def || typeof def !== "object") throw configError.roleNotAnObject();
+		if (!def.slug) throw configError.roleWithoutSlug();
 	}
 	checkReferences(defs);
 
@@ -120,17 +121,15 @@ const normalizeCodeRoles = (raw) => {
 		const actions = {};
 		for (const [kind, spec] of Object.entries(def.actions ?? {})) {
 			// `declare` is the role's own `where` — one statement, not two.
-			if (!spec || typeof spec !== "object") throw new Error(`codeRoles: \`${def.slug}.actions.${kind}\` must be an object with \`where\``);
-			if (spec.where == null) throw new Error(`codeRoles: \`${def.slug}.actions.${kind}\` has no \`where\``);
+			if (!spec || typeof spec !== "object") throw configError.actionNotAnObject({ role: def.slug, action: kind });
+			if (spec.where == null) throw configError.actionWithoutWhere({ role: def.slug, action: kind });
 			actions[kind] = normalizeAction(`${def.slug}.actions.${kind}`, spec, roleSlugs);
 		}
 		if (def.where != null) {
-			throw new Error(
-				`codeRoles: \`${def.slug}.where\` — a role says WHAT code is, a node says WHERE it lives: move it to a child of the node that holds it — \`- { name: <file>, role: ${def.slug} }\` for one file, \`- { name: <folder>, role: ${def.slug} }\` for a whole folder`,
-			);
+			throw configError.roleWhereNotAllowed({ role: def.slug });
 		}
 		for (const key of Object.keys(def)) {
-			if (!ROLE_KEYS.has(key)) throw new Error(`codeRoles: \`${def.slug}.${key}\` is not a role key — actions belong under \`actions\``);
+			if (!ROLE_KEYS.has(key)) throw configError.unknownRoleKey({ role: def.slug, key, allowed: SCHEMA.role });
 		}
 		out[def.slug] = {
 			slug: def.slug,
@@ -143,4 +142,4 @@ const normalizeCodeRoles = (raw) => {
 	return out;
 };
 
-module.exports = {normalizeCodeRoles};
+module.exports = {normalizeCodeRoles, SCOPE};

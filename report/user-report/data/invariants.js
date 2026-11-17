@@ -11,24 +11,11 @@ const { labelOf } = require("../../../entities/location");
 // `where` entries (utils/where.js) and are labelled by the same describer the
 // engine uses — never `String(entry)`.
 
-const CONTAINER_OPS = new Set(["some", "every", "none", "length", "where", "filter", "by"]);
-// A quantifier says "one of them": it belongs to the path as `[*]`, not as a
-// field called `any` — `siblings[*].words` reads like the list it walks.
-const QUANTIFIER_OPS = new Set(["some", "every", "none", "any"]);
+const { CONTAINERS: CONTAINER_OPS, QUANTIFIERS: QUANTIFIER_OPS, SCALAR_OPS } = require("../../../entities/operators");
+
 // Report text is shown separately; it is not part of the condition.
 const IGNORED = new Set(["report", "message", "fix", "key", "line"]);
 
-const SCALAR_OPS = {
-	gt: ">",
-	gte: "≥",
-	lt: "<",
-	lte: "≤",
-	equals: "=",
-	in: "in",
-	not: "≠",
-	isSet: "is set",
-	matches: "matches",
-};
 
 const formatValue = (v) => {
 	if (typeof v === "string") return v;

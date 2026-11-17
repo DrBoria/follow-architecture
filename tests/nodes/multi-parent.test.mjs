@@ -107,7 +107,7 @@ describe("node-reference children", () => {
 	});
 
 	it("fails loudly when it points at a node that does not exist", () => {
-		expect(() => buildTree([{ slug: "apps", name: "apps", children: [{ node: "nope" }] }])).toThrow(/unknown node nope/);
+		expect(() => buildTree([{ slug: "apps", name: "apps", children: [{ node: "nope" }] }])).toThrow(/names unknown child `nope`/);
 	});
 });
 
@@ -117,7 +117,7 @@ describe("nodes: structure only", () => {
 		// keys once — silently ignoring one would let the YAML claim a rule that
 		// nothing enforces.
 		for (const key of ["kind", "declares", "location", "roles"]) {
-			expect(() => buildTree([{ slug: "a", name: "a", [key]: {} }])).toThrow(new RegExp(`unknown key \`${key}\``));
+			expect(() => buildTree([{ slug: "a", name: "a", [key]: {} }])).toThrow(new RegExp(`\`a\\.${key}\` is not a node key`));
 		}
 	});
 
@@ -125,7 +125,7 @@ describe("nodes: structure only", () => {
 		const tree = buildTree([{ slug: "a", name: "a", children: ["x.ts"], report: { message: "no" } }]);
 		expect(tree.bySlug.a.closed).toBeUndefined();
 		// `closed` is not a structure key any more: an unknown key is an error.
-		expect(() => buildTree([{ slug: "a", name: "a", closed: true }])).toThrow(/unknown key `closed`/);
+		expect(() => buildTree([{ slug: "a", name: "a", closed: true }])).toThrow(/`a\.closed` is not a node key/);
 	});
 });
 

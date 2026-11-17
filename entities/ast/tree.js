@@ -6,6 +6,13 @@
 // speaks exactly the vocabulary of the parser.
 
 const { SyntaxKind: SK } = require("ts-morph");
+const { notice } = require("../../report/notices");
+
+// Declarations that ARE an import: the parser's own names for the three forms.
+// One list, because three passes ask the same question (`file.js` twice,
+// `assignments.js` once) and an import is recognised the same way in all of them.
+const IMPORT_DECL_KINDS = new Set(["ImportSpecifier", "ImportClause", "NamespaceImport"]);
+const isImportDecl = (decl) => IMPORT_DECL_KINDS.has(decl?.getKindName?.());
 
 // Function-like nodes — the candidates for any function-shaped role.
 const FUNCTION_KINDS = new Set([
@@ -75,19 +82,58 @@ const unwrapParens = (node) => {
 
 // A type as the parser reads it, or "any".
 const typeText = (node) => {
-	const t = node.getType();
-	return t.isAny() ? "any" : t.getText();
+	try {
+		const t = node.getType();
+		return t.isAny() ? "any" : t.getText();
+	} catch (error) {
+		// The checker fails on an import it cannot resolve (a broken path, a package
+		// that is not installed). That is NOT a type: the fact is UNKNOWN, and an
+		// unknown type must not take the analysis of the whole run down with it. The
+		// reason is reported, so a partial answer never passes for a clean one.
+		const file = node.getSourceFile?.()?.getFilePath?.() ?? "?";
+		notice(`a type could not be read (${file})`, error && error.message ? error.message : String(error));
+
+		return null;
+	}
 };
 
 // Raw per-member facts of an object literal: `[{name, is, type}]`. The engine
 // records DATA, not verdicts — "does this literal have methods?" is a query
 // (`members: { some: { is: { equals: "MethodDeclaration" } } }`).
-const memberFacts = (objLit) =>
-	objLit.getProperties().map((p) => ({
-		name: typeof p.getName === "function" ? p.getName() : null,
-		is: kindName(p),
-		type: typeText(p),
-	}));
+// A property whose initializer is a LITERAL also carries the VALUE it was written
+// with (`'#182022'`, `12`, `0`). That is what makes a theme's `colors: { section:
+// '#182022' }` readable as a COLOUR — a property of the thing itself, not of the
+// folder it sits in.
+const literalValueOf = (property) => {
+	const init = property.getInitializer?.();
+	if (!init) return null;
+	const kind = init.getKind?.();
+	const isLiteral = kind === SK.StringLiteral || kind === SK.NoSubstitutionTemplateLiteral || kind === SK.NumericLiteral;
+	if (!isLiteral) return null;
+
+	return kind === SK.NumericLiteral ? Number(init.getLiteralText?.()) : String(init.getLiteralText?.());
+};
+
+// A member whose initializer is ANOTHER object literal carries its own members —
+// that is what makes `theme.colors.section` reachable as a fact. The walk stops at
+// MAX_MEMBER_DEPTH so a pathological literal cannot turn a report into a full tree
+// walk; what is NOT an object literal (`new Map(…)`, a call, a method shorthand)
+// simply has no `members`, instead of an empty list that would read like "none".
+const MAX_MEMBER_DEPTH = 4;
+
+const memberFacts = (objLit, depth = 0) =>
+	objLit.getProperties().map((p) => {
+		const init = p.getInitializer?.() ?? null;
+		const nested = depth < MAX_MEMBER_DEPTH && init?.getKind?.() === SK.ObjectLiteralExpression;
+
+		return {
+			name: typeof p.getName === "function" ? p.getName() : null,
+			is: kindName(p),
+			type: typeText(p),
+			value: literalValueOf(p),
+			...(nested ? { members: memberFacts(init, depth + 1) } : {}),
+		};
+	});
 
 // A descendant is meaningful when it is not a SyntaxList and not a punctuation
 // token. Keywords (NumberKeyword, …) are kept — they are meaningful.
@@ -124,13 +170,26 @@ const depthOf = (n, root) => {
 	return depth;
 };
 
+// A node's own name. `getName()` throws on a destructured parameter
+// (`({ a, b }) => …`): ts-morph's `getNameNode()` is undefined for a binding
+// pattern, so the pattern's own text is what names it.
+const nameOfNode = (node) => {
+	if (typeof node.getNameNode === "function") {
+		const nameNode = node.getNameNode();
+
+		return nameNode ? String(nameNode.getText()) : null;
+	}
+
+	return typeof node.getName === "function" ? (node.getName() ?? null) : null;
+};
+
 // Raw facts for ONE node, as the `kind` fact describes it. Every facet of
 // `kind` — own, parent, ancestors, children, siblings, descendants — answers
 // with this same descriptor; the extras (`depth`, `nested`, `members`, …) are
 // what that particular facet knows on top of it.
 const descriptor = (node) => ({
 	is: kindName(node),
-	name: node.getName ? (node.getName() ?? null) : null,
+	name: nameOfNode(node),
 	line: startLine(node),
 });
 
@@ -274,6 +333,8 @@ const kindFact = (n, initializer) => {
 module.exports = {
 	SK,
 	kindName,
+	isImportDecl,
+	nameOfNode,
 	nodeText,
 	isFunctionNode,
 	isCallNode,

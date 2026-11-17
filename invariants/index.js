@@ -88,22 +88,61 @@ const collectScalars = (value, vars, depth = 0) => {
 	}
 };
 
+// A list filter is often wrapped in a QUANTIFIER (`any`/`some`/`every`/`none`):
+// the fields the rule names live inside it, one level further down.
+const QUANTIFIERS = new Set(["any", "some", "every", "none"]);
+const branchOf = (sub) => {
+	const keys = Object.keys(sub ?? {});
+	if (keys.length === 1 && QUANTIFIERS.has(keys[0]) && isObj(sub[keys[0]])) return sub[keys[0]];
+
+	return sub;
+};
+
+// `{what}` for a piece with no name of its own: what it IS and where it starts,
+// so the sentence can still be followed to a line.
+const describePiece = (c) => {
+	const line = c.lines?.[0] ?? 1;
+	const tag = c.css?.templates?.[0]?.tag ?? null;
+
+	return tag ? `the ${tag} block at line ${line}` : `the code at line ${line}`;
+};
+
 const listFactVars = (vars, target, filter, scope) => {
 	for (const [field, sub] of Object.entries(filter ?? {})) {
-		const list = fieldOf(target, field);
-		if (!Array.isArray(list) || !isObj(sub)) continue;
+		if (!isObj(sub)) continue;
+		const branch = branchOf(sub);
+		const value = fieldOf(target, field);
+		// A field that is not a list is still a ROAD: a rule reaches a list through
+		// the objects on the way (`css` → `templates` → `declarations` → `reads`), so
+		// the walk follows the same path the filter took.
+		if (isObj(value)) {
+			listFactVars(vars, value, branch, scope);
+			continue;
+		}
+		if (!Array.isArray(value)) continue;
+		const list = value;
 		const hit = listHit(list, filter, field, scope);
 		if (hit.length) {
 			const keys = [...new Set(hit.flatMap((item) => Object.entries(item ?? {}).filter(([, v]) => typeof v === "string" && v).map(([k]) => k)))];
 			for (const key of keys) {
-				const value = [...new Set(hit.map((x) => x?.[key]).filter(Boolean))].join(", ");
-				if (value) vars[key] = value;
+				const found = [...new Set(hit.map((x) => x?.[key]).filter(Boolean))].join(", ");
+				if (found) vars[key] = found;
 			}
 			// `{what}` names the thing the rule caught: the matched item's own name.
 			if (vars.what == null) {
 				const named = [...new Set(hit.map((x) => x?.name).filter(Boolean))].join(", ");
 				if (named) vars.what = named;
 			}
+			// `{literals}`, `{declarations}`, `{reads}` — the field the rule TESTED,
+			// printed as the words it caught. Which word stands for an item is the
+			// item's own business: its name, else the text it holds, else the property
+			// or selector it is.
+			if (vars[field] == null) {
+				const spokenItems = [...new Set(hit.map((x) => x?.name ?? x?.text ?? x?.prop ?? x?.selector ?? x?.tag).filter(Boolean))].join(", ");
+				if (spokenItems) vars[field] = spokenItems;
+			}
+			// …and one level down, into the items themselves.
+			for (const item of hit) listFactVars(vars, item, branch, scope);
 		}
 		// `where` NARROWS a list: name the offending declarations themselves, so
 		// the finding is self-sufficient without opening the file.
@@ -169,9 +208,17 @@ const checkInfer = (inv, ctx, out, findingFrom, dedupe) => {	const facts = ctx.f
 		const fileAnswer = matches(facts, filter, scope);
 		if (!fileAnswer) {
 			for (const c of facts.candidates ?? []) {
-				if (matches(c, filter, scope)) {
-					// `{what}`: the candidate's own name, else the piece it sits in.
-					const vars = { ...fileVars(ctx), what: c.name ?? c.location?.piece ?? null };
+				// `$` inside a candidate filter names the candidate's OWN facts too
+				// (its `parameters`, `kind`, `returns`, …), not only the file's — so a
+				// rule can compare a function with itself (every parameter against the
+				// `@param` tags) without a second copy of the data. File facts keep
+				// priority on a key clash (`{ ...c, ...scope }`).
+				const candidateScope = { ...c, ...scope };
+				if (matches(c, filter, candidateScope)) {
+					// `{what}`: the candidate's own name, else the piece it sits in, else —
+					// for an anonymous function or a bare template — the one thing a reader
+					// can find it by: what it is and where it starts.
+					const vars = { ...fileVars(ctx), what: c.name ?? c.location?.piece ?? describePiece(c) };
 					listFactVars(vars, c, filter, scope);
 					// The matched piece's own scalar facts are addressable too: a rule about
 					// `callDepth` names the chain it measured (`{callChain}`), and the

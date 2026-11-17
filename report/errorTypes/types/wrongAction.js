@@ -8,6 +8,7 @@
 
 const { WRONG_ACTION } = require("../vocabulary/ids");
 const { nounOf } = require("../vocabulary/verbs");
+const { changesState } = require("../../../entities/kinds");
 const { relationMessage, factText, subjectText, whyText } = require("../vocabulary/phrases");
 
 const classify = (ctx, places) => {
@@ -62,7 +63,7 @@ const fixes = (story, ctx) => {
 	const plural = story.token?.subject?.plural;
 	const them = plural ? "them" : "it";
 	const touched = story.target.paths[0] ?? story.target.node;
-	const isWrite = story.kind === "mutate" || story.kind === "assign";
+	const isWrite = changesState(story.kind);
 	const out = [];
 
 	// WHERE IT BELONGS — already decided by the decision maker, from code roles.

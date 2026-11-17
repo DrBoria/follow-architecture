@@ -20,9 +20,11 @@
 //            value), `assign` (state handed in or declared by another file), or
 //            null (this file's own private state — no role has a say in it)
 
-const { SK, isFunctionNode, isClassNode, startLine, inThisPiece } = require("./tree");
+const { SK, isFunctionNode, isClassNode, startLine, inThisPiece, isImportDecl } = require("./tree");
 const { importModuleOf, isThisChain } = require("./properties");
 const { declaredFileOfNode, declaredFileOf, declaredFileOfType, declaredFileOfExpr, inRepo } = require("./file");
+const { notice } = require("../../report/notices");
+const { RELATION, VIA } = require("../kinds");
 
 // The identifier a written expression is rooted in: `state.a.b = …` → `state`.
 // Null when the root is not an identifier at all (`getRoot().x = …`, `this.x`).
@@ -68,7 +70,7 @@ const plainAssignments = (node, importMap) =>
 			const lhs = a.getLeft();
 			const fn = isFunctionNode(node) ? node : null;
 
-			return { line: lhs.getStartLineNumber(), target: lhs.getText(), via: "assign", value: rootNameOf(lhs), local: fn ? isLocalTarget(lhs, fn) : false, module: importModuleOf(lhs, importMap), onThis: isThisChain(lhs) };
+			return { line: lhs.getStartLineNumber(), target: lhs.getText(), via: VIA.ASSIGN, performed: true, value: rootNameOf(lhs), local: fn ? isLocalTarget(lhs, fn) : false, module: importModuleOf(lhs, importMap), onThis: isThisChain(lhs) };
 		});
 
 // Writes into ANOTHER module's value: assignment to an imported binding,
@@ -92,8 +94,8 @@ const collectMutations = (node, importMap) => {
 		if (kind === SK.BinaryExpression && d.getOperatorToken().getText() === "=") {
 			const lhs = d.getLeft();
 			const module = importModuleOf(lhs, importMap);
-			if (module) out.push({ line: d.getStartLineNumber(), target: lhs.getText(), via: "assign", value: rootNameOf(lhs), module });
-			else if (isThisChain(lhs)) out.push({ line: d.getStartLineNumber(), target: lhs.getText(), via: "assign", value: rootNameOf(lhs), onThis: true });
+			if (module) out.push({ line: d.getStartLineNumber(), target: lhs.getText(), via: VIA.ASSIGN, performed: true, value: rootNameOf(lhs), module });
+			else if (isThisChain(lhs)) out.push({ line: d.getStartLineNumber(), target: lhs.getText(), via: VIA.ASSIGN, performed: true, value: rootNameOf(lhs), onThis: true });
 			// `f().x = …` — writing INTO the value a function returned. The callee is
 			// what is mutated (that is the object the write lands in), so the edge
 			// points at the module that returns it. Without this, every store write
@@ -102,14 +104,14 @@ const collectMutations = (node, importMap) => {
 			else {
 				const call = callRootOf(lhs);
 				const calleeModule = call ? importModuleOf(call.getExpression?.(), importMap) : null;
-				if (calleeModule) out.push({ line: d.getStartLineNumber(), target: lhs.getText(), via: "assign", value: rootNameOf(lhs), module: calleeModule });
+				if (calleeModule) out.push({ line: d.getStartLineNumber(), target: lhs.getText(), via: VIA.ASSIGN, performed: true, value: rootNameOf(lhs), module: calleeModule });
 			}
 			continue;
 		}
 		if (kind === SK.DeleteExpression) {
 			const module = importModuleOf(d.getExpression(), importMap);
-			if (module) out.push({ line: d.getStartLineNumber(), target: d.getExpression().getText(), via: "delete", value: rootNameOf(d.getExpression()), module });
-			else if (isThisChain(d.getExpression())) out.push({ line: d.getStartLineNumber(), target: d.getExpression().getText(), via: "delete", value: rootNameOf(d.getExpression()), onThis: true });
+			if (module) out.push({ line: d.getStartLineNumber(), target: d.getExpression().getText(), via: VIA.DELETE, performed: true, value: rootNameOf(d.getExpression()), module });
+			else if (isThisChain(d.getExpression())) out.push({ line: d.getStartLineNumber(), target: d.getExpression().getText(), via: VIA.DELETE, performed: true, value: rootNameOf(d.getExpression()), onThis: true });
 			continue;
 		}
 		if (kind === SK.CallExpression) {
@@ -118,7 +120,7 @@ const collectMutations = (node, importMap) => {
 			const fn = callee.getName?.() ?? "";
 			if (fn !== "freeze" && fn !== "seal") continue;
 			const module = importModuleOf(d.getArguments()[0], importMap);
-			if (module) out.push({ line: d.getStartLineNumber(), target: d.getArguments()[0].getText(), via: fn, value: rootNameOf(d.getArguments()[0]), module });
+			if (module) out.push({ line: d.getStartLineNumber(), target: d.getArguments()[0].getText(), via: fn, performed: true, value: rootNameOf(d.getArguments()[0]), module });
 		}
 	}
 
@@ -142,7 +144,16 @@ const taggedWrites = (node, sf, repoRoot, importMap) => {
 	// `Array.splice` return a value and still change the receiver.
 	const methodWrites = (call) => {
 		if (call.getParent()?.getKind() === SK.ExpressionStatement) return true;
-		const sig = checker?.getResolvedSignature?.(call);
+			let sig = null;
+			try {
+				sig = checker?.getResolvedSignature?.(call) ?? null;
+			} catch (error) {
+				// The checker throws on a call whose import it cannot resolve. Whether that
+				// method WRITES is then unknown — not a write, and not a silence either.
+				notice(`whether \`${call.getText?.() ?? "a call"}\` writes could not be read`, error && error.message ? error.message : String(error));
+
+				return false;
+			}
 		const decl = sig?.declaration ?? sig?.getDeclaration?.();
 		const retNode = decl?.getReturnTypeNode?.();
 		if (retNode) {
@@ -186,7 +197,7 @@ const taggedWrites = (node, sf, repoRoot, importMap) => {
 				// it. A bare `x = ...` reassignment is a different pattern.
 				if (!lhs || lhs.getKind() !== SK.PropertyAccessExpression) return null;
 				receiver = lhs.getExpression();
-				via = "assign";
+				via = VIA.ASSIGN;
 			} else if (d.getKind() === SK.CallExpression) {
 				// `x.method(…)` — a call OF the value. Three things have to hold: the
 				// method is called on the value itself and not on something taken out
@@ -197,7 +208,7 @@ const taggedWrites = (node, sf, repoRoot, importMap) => {
 				if (!callee || callee.getKind() !== SK.PropertyAccessExpression) return null;
 				if (!methodWrites(d)) return null;
 				receiver = callee.getExpression();
-				via = "call";
+				via = VIA.CALL;
 			}
 			if (!receiver) return null;
 			const rootNode = rootNodeOf(receiver);
@@ -245,14 +256,16 @@ const taggedWrites = (node, sf, repoRoot, importMap) => {
 
 			// WHAT is written: for an assignment the whole target, for a method call
 			// the value the method changes (the method's own name goes in `method`).
-			const method = via === "call" ? d.getExpression().getName() : null;
-			const written = via === "assign" ? d.getLeft().getText() : receiver.getText();
+			const method = via === VIA.CALL ? d.getExpression().getName() : null;
+			const written = via === VIA.ASSIGN ? d.getLeft().getText() : receiver.getText();
 			// `store.loggerChannel` where `store = getRootStore()` → `getRootStore().loggerChannel`
 			// Only a CALL gives the value an owner. `const state = {n: 0}` is this
 			// file's own object, and rewriting its target to `{n: 0}.n` says nothing.
 			const target = aliasText && root && initCall ? written.replace(new RegExp(`^${root}\\b`), aliasText) : written;
 
-			return { line: startLine(d), target, method, value: root, via, type, module: fromCall ?? fromInit ?? undefined, param: Boolean(param) };
+			// `performed` — this LINE changes the value. An assignment always does; a method
+			// call hands the work to the callee, unless the callee is our own parameter.
+			return { line: startLine(d), target, method, value: root, via, performed: via === VIA.ASSIGN || Boolean(param), type, module: fromCall ?? fromInit ?? undefined, param: Boolean(param) };
 		})
 		.filter(Boolean);
 };
@@ -271,12 +284,27 @@ const taggedWrites = (node, sf, repoRoot, importMap) => {
 // otherwise, so both spellings name the same file.
 const isSameFile = (file, rel) => file != null && rel != null && (file === rel || file.endsWith(`/${rel}`));
 
+// WHERE the value came from decides the word, and the FACT'S OWN FIELDS say it.
+// The first field present, in this order:
+//   param  — handed in (an action's state)                       → assign
+//   onThis — the code's own `this`                               → mutate
+//   module — reached in another module (an imported binding)     → mutate
+//   type   — a value whose shape is declared elsewhere           → assign
+// Nothing present: this file's own object — no role has a say in it.
+// `module`/`type` name a FILE, so the same file means the value never left home.
+const RELATION_OF_FIELD = { param: RELATION.ASSIGN, onThis: RELATION.MUTATE, module: RELATION.MUTATE, type: RELATION.ASSIGN };
+
+// A write the CALLEE performs has no relation: the word would describe the
+// store's action, not this line.
 const relationOf = (entry, rel) => {
-	// A value the piece made itself stays its own: a factory in THIS file is not
-	// somebody else's state, whatever module it lives in.
-	if (entry.module && !isSameFile(entry.module, rel)) return "mutate";
-	if (entry.onThis) return "mutate";
-	if (entry.param || (entry.type && !isSameFile(entry.type, rel))) return "assign";
+	if (!entry.performed) return null;
+	for (const [field, relation] of Object.entries(RELATION_OF_FIELD)) {
+		const value = entry[field];
+		if (!value || (typeof value === "string" && isSameFile(value, rel))) continue;
+
+		return relation;
+	}
+
 	return null;
 };
 

@@ -82,8 +82,8 @@ export const getRootStore = (): Store | undefined => ref.current;
 			"src/app.ts",
 			`import { types as t } from "mobx-state-tree";
 import { getRootStore } from "./store";
-export const logInfo = (m: string): void => { getRootStore()?.channel?.appendLine(m); };
-export const logWarn = (m: string): void => { getRootStore()?.channel?.appendLine(m); };
+export const logInfo = (m: string): void => { getRootStore()!.level = m; };
+export const logWarn = (m: string): void => { getRootStore()!.level = m; };
 `,
 		);
 	});
@@ -94,7 +94,7 @@ export const logWarn = (m: string): void => { getRootStore()?.channel?.appendLin
 		expect(code).toBe(1);
 		// both pieces, one sentence — no name is dropped
 		expect(printed).toContain("`logInfo`, `logWarn`");
-		expect(printed).toContain("change `getRootStore()?.channel`");
+		expect(printed).toContain("change `getRootStore()!.level`");
 		// the owner is the store, said as a role
 		expect(printed).toContain("of the `storeModel` (`src/store.ts`)");
 	});
@@ -103,7 +103,7 @@ export const logWarn = (m: string): void => { getRootStore()?.channel?.appendLin
 		const { printed } = run(["--files", "src/app.ts"]);
 		// the paragraph about THIS write, not the whole report: other findings in the
 		// same file may legitimately still be prohibitions
-		const write = printed.split("---").find((part) => part.includes("change `getRootStore()?.channel`")) ?? "";
+		const write = printed.split("---").find((part) => part.includes("change `getRootStore()!.level`")) ?? "";
 
 		expect(write).toContain("Move them");
 		expect(write).not.toContain("Delete");

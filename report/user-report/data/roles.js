@@ -35,7 +35,15 @@ const collectExamples = ({ arch, files, repoRoot, repoFiles, project }) => {
 		try {
 			// Same order as the engine: the file's facts first (a role may be
 			// recognised by what the file depends on), then the classification.
-			const fileFacts = collectFileFacts(sf, { rel, repoFiles, aliases: arch.aliases ?? {}, repoRoot, candidates: [] });
+			// Same order as the engine: the FACETS first — a role may be defined on
+			// `css.*` or `framework.*`, which is how a styled block and a component
+			// become roles at all. No separate section: the facts travel with the
+			// candidates the roles are built from.
+			const { attachToCandidates: attachCssFacts } = require("../../../css");
+						const { enrich: attachFrameworkFacts } = require("../../../frameworks");
+			attachFrameworkFacts(candidates, { rel, sf, text: readText(path.join(repoRoot, rel)), repoRoot });
+			attachCssFacts(candidates, { sf });
+				const fileFacts = collectFileFacts(sf, { rel, repoFiles, aliases: arch.aliases ?? {}, repoRoot, candidates: [] });
 			for (const c of candidates) c.file = fileFacts;
 			withRoles = classifyRoles(candidates, arch.codeRoles ?? {}, arch).candidates;
 		} catch {

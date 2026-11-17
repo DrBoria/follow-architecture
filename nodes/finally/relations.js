@@ -7,7 +7,8 @@ const { hitOf } = require("../../entities/queries");
 const { accessorLabel, checkWhere } = require("../../entities/location");
 const { deepestMatch, targetCapsFor } = require("../../entities/tree");
 const { homesOf, rolesAtPath, dirOf } = require("../../entities/location");
-const { FACT_KINDS, EDGE_FACTS, declaredActions } = require("../../entities/kinds");
+const { RELATION, FACT_KINDS, EDGE_FACTS, changesState, declaredActions } = require("../../entities/kinds");
+const { SCOPE } = require("../../code-roles/roles");
 const { relationMessage } = require("../../report/errorTypes/vocabulary/phrases");
 const { allowedPlaces } = require("./roles");
 
@@ -78,7 +79,7 @@ const checkRelations = (ctx, arch, violations) => {
 				pairs.push({ targetSlug, action, caps, violation, outward: denied });
 			}
 			for (const roleSlug of Object.keys(arch.codeRoles ?? {})) {
-				const accessors = (declared.get("call")?.get(roleSlug)?.scopeAccess ?? []).filter((x) => x.scope === "function").map((x) => x.segments[0]);
+				const accessors = (declared.get(RELATION.CALL)?.get(roleSlug)?.scopeAccess ?? []).filter((x) => x.scope === SCOPE.FUNCTION).map((x) => x.segments[0]);
 				if (!accessors.length) continue;
 				const ownFile = homesOf(arch, roleSlug)
 					.map((h) => h.template)
@@ -107,7 +108,7 @@ const checkRelations = (ctx, arch, violations) => {
 			for (const { targetSlug, action, caps, outward } of pairs.slice(0, 1)) {
 
 				const all = allowedPlaces(action.where, arch, caps);
-				const callDecl = declared.get("call")?.get(targetSlug) ?? null;
+				const callDecl = declared.get(RELATION.CALL)?.get(targetSlug) ?? null;
 				const callOk = callDecl?.where ? !checkWhere(callDecl.where, ctx.rel, arch, facts, caps) : false;
 				const route = callOk ? ((callDecl?.scopeAccess ?? [])[0] ?? null) : null;
 				const others = all.filter((p) => p.role !== targetSlug);
@@ -133,7 +134,7 @@ const checkRelations = (ctx, arch, violations) => {
 	for (const g of groups.values()) {
 		const names = [...(g.pieces ?? new Map()).keys()];
 		const roles = [...new Set([...(g.pieces ?? new Map()).values()].filter(Boolean))];
-		const owner = g.kind === "mutate" || g.kind === "assign" ? deepestMatch(String(g.path ?? ""), arch)?.node ?? null : null;
+		const owner = changesState(g.kind) ? deepestMatch(String(g.path ?? ""), arch)?.node ?? null : null;
 		const ownerRole = (owner?.roles ?? []).filter(Boolean)[0] ?? null;
 		const token = {
 			code: "relation.forbidden",

@@ -8,11 +8,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Project, ts } = require("ts-morph");
 
-const { SK, startLine, linesOf, descriptor, descendantsOf, nodeText } = require("./tree");
+const { SK, startLine, linesOf, descriptor, descendantsOf, nodeText, isImportDecl } = require("./tree");
 const { readsFact, enclosingPiece } = require("./properties");
 const { resolveImport, pathsOf } = require("../../utils/imports");
 const { heritageOf } = require("./heritage");
 const { placeOf } = require("../location");
+const { notice } = require("../../report/notices");
 
 // ── Loading ─────────────────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ const declaredFileOfNode = (typeNode, checker, repoRoot) => {
 	const deref = (symbol) => {
 		if (!symbol) return null;
 		const decls = symbol.getDeclarations();
-		const isImport = decls.some((d) => ["ImportSpecifier", "ImportClause", "NamespaceImport"].includes(d.getKindName()));
+		const isImport = decls.some(isImportDecl);
 		return isImport ? checker.getAliasedSymbol(symbol) : symbol;
 	};
 	const firstDecl = (symbol) => {
@@ -144,7 +145,13 @@ const declaredFileOfNode = (typeNode, checker, repoRoot) => {
 			if (kind === "ParenthesizedType" || kind === "TypeOperator") return [n.getTypeNode()].filter(Boolean);
 			if (kind === "ArrayType") return [n.getElementTypeNode()].filter(Boolean);
 			if (kind === "IndexedAccessType") return [n.getObjectTypeNode()].filter(Boolean);
-			if (kind === "TupleType") return n.getElementTypeNodes().slice(0, 1);
+			if (kind === "TupleType") {
+	// ts-morph's `TupleTypeNode` has `getElements()`;  the element is either the
+	// type node itself or a named member (`[name: string]`) that holds it.
+	const [first] = n.getElements();
+
+	return first ? [first.getTypeNode?.() ?? first] : [];
+}
 
 			return [];
 		};
@@ -178,7 +185,11 @@ const declaredFileOfNode = (typeNode, checker, repoRoot) => {
 			if (decl) return decl;
 		}
 		return null;
-	} catch {
+	} catch (error) {
+		// The checker cannot answer where a type is declared — an import it cannot
+		// resolve, a cycle. The answer is UNKNOWN, and the reason is reported.
+		notice(`the file declaring a type could not be resolved`, error && error.message ? error.message : String(error));
+
 		return null;
 	}
 };
@@ -194,7 +205,7 @@ const declaredFileOfType = (type, checker, repoRoot) => {
 	const resolved = (symbol) => {
 		if (!symbol) return null;
 		const decls = symbol.getDeclarations();
-		const isImport = decls.some((d) => ["ImportSpecifier", "ImportClause", "NamespaceImport"].includes(d.getKindName()));
+		const isImport = decls.some(isImportDecl);
 		return isImport ? checker.getAliasedSymbol(symbol) : symbol;
 	};
 	const firstDecl = (symbol) => {
@@ -224,9 +235,12 @@ const declaredFileOfType = (type, checker, repoRoot) => {
 			decl = next;
 		}
 		return decl;
-	} catch {
-		return null;
-	}
+	} catch (error) {
+			// Same answer as above, for a type the checker already produced.
+			notice("the file declaring a type could not be resolved", error && error.message ? error.message : String(error));
+
+			return null;
+		}
 };
 
 // Is a file part of the repo the architecture describes? A global such as
@@ -269,9 +283,18 @@ const declaredFileOfExpr = (expr, checker, repoRoot, depth = 0) => {
 	if (!expr || depth > 4) return null;
 	const aliased = (symbol) => {
 		if (!symbol) return null;
-		const isImport = (symbol.getDeclarations?.() ?? []).some((d) => ["ImportSpecifier", "ImportClause", "NamespaceImport"].includes(d.getKindName()));
+		try {
+			const isImport = (symbol.getDeclarations?.() ?? []).some(isImportDecl);
 
-		return isImport ? checker.getAliasedSymbol(symbol) : symbol;
+			return isImport ? checker.getAliasedSymbol(symbol) : symbol;
+		} catch (error) {
+			// An import the checker cannot resolve — a package that is not installed, a
+			// path typo — has no aliased symbol. WHOSE VALUE THIS IS stays unknown, and
+			// an unknown is not a reason to lose the whole run to a `Debug Failure`.
+			notice(`the import behind \`${symbol.getName?.() ?? "a name"}\` could not be followed`, error && error.message ? error.message : String(error));
+
+			return null;
+		}
 	};
 	const returnTypeOf = (call) => {
 		const callee = call.getExpression?.();
@@ -305,9 +328,17 @@ const declaredFileOfExpr = (expr, checker, repoRoot, depth = 0) => {
 		if (byReturn) return byReturn;
 	}
 
-	return declaredFileOfType(expr.getType?.(), checker, repoRoot);
-};
+		// `getType()` itself asks the checker, and the checker throws on an import it
+		// cannot resolve — the question is answered OUTSIDE `declaredFileOfType`'s
+		// own guard, so it is guarded here: the declaring file stays UNKNOWN.
+		try {
+			return declaredFileOfType(expr.getType?.(), checker, repoRoot);
+		} catch (error) {
+			notice(`the type of \`${expr.getText?.() ?? "an expression"}\` could not be read`, error && error.message ? error.message : String(error));
 
+			return null;
+		}
+};
 module.exports = { declaredFileOfNode, declaredFileOf, declaredFileOfType, declaredFileOfExpr, inRepo };
 
 // ── What is in the file ─────────────────────────────────────────────────────

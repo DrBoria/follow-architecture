@@ -1,3 +1,4 @@
+const configError = require("../report/configErrors");
 "use strict";
 
 // The closed vocabulary of file→file relations: one producer per relation,
@@ -8,7 +9,29 @@
 // edges, code-roles/roles.js validates `of:`, nodes/finally.js enforces.
 // A `call` also carries `with` — the arguments whose type a repo file declares.
 
-const FACT_KINDS = ["import", "export", "declare", "call", "mutate", "assign", "read", "typeImport"];
+// THE VOCABULARY, as an enum: one name per relation, one spelling everywhere —
+// producers, filters, edges and the report read `RELATION.MUTATE`, never "mutate".
+const RELATION = Object.freeze({
+	IMPORT: "import",
+	EXPORT: "export",
+	DECLARE: "declare",
+	CALL: "call",
+	MUTATE: "mutate",
+	ASSIGN: "assign",
+	READ: "read",
+	TYPE_IMPORT: "typeImport",
+});
+
+const FACT_KINDS = Object.values(RELATION);
+
+// How a WRITE is spelled in the code — the `via` of a write fact.
+const VIA = Object.freeze({ ASSIGN: "assign", CALL: "call", DELETE: "delete", FREEZE: "freeze", SEAL: "seal" });
+
+// The relations that CHANGE state — the only ones that name an OWNER: the place
+// the changed value lives. Every other relation only moves code around.
+const CHANGES_STATE = new Set([RELATION.MUTATE, RELATION.ASSIGN]);
+
+const changesState = (relation) => CHANGES_STATE.has(relation);
 
 // The role of the piece of code a fact belongs to, by the piece's name.
 // The role of a piece is the role of ANY candidate describing it: a `const` holding
@@ -67,7 +90,7 @@ const readsOf = (facts) =>
 const assignmentsOf = (facts, { mutate }) =>
 	(facts.candidates ?? []).flatMap((c) =>
 		(c.assignments ?? [])
-			.filter((a) => a.relation === (mutate ? "mutate" : "assign"))
+			.filter((a) => a.relation === (mutate ? RELATION.MUTATE : RELATION.ASSIGN))
 			.map((a) => ({
 				path: mutate ? (a.onThis ? facts.location.path : a.module) : facts.location.path,
 				line: a.line ?? lineOf(c),
@@ -75,7 +98,7 @@ const assignmentsOf = (facts, { mutate }) =>
 				role: roleOfPiece(facts, c.name),
 				// THE FACT — what the code did, as data. Every word about it is
 				// written by `report/errorTypes/phrases.js`.
-				fact: { kind: mutate ? "mutate" : "assign", target: a.target ?? null, module: a.module ?? null, method: a.method ?? null, onThis: Boolean(a.onThis) },
+				fact: { kind: mutate ? RELATION.MUTATE : RELATION.ASSIGN, target: a.target ?? null, module: a.module ?? null, method: a.method ?? null, onThis: Boolean(a.onThis) },
 				what: mutate
 					? a.onThis
 						? `changes \`${a.target}\` of its own file`
@@ -88,7 +111,7 @@ const EDGE_FACTS = {
 	// `import … from "x"` — a resolved static import. `import type` is NOT a
 	// dependency: nothing runs and nothing is bound at runtime, so an adapter may
 	// name a type of the code it must not import (and the reverse).
-	import: (facts) =>
+	[RELATION.IMPORT]: (facts) =>
 		(facts.imports ?? [])
 			.filter((imp) => imp.resolved && !imp.typeOnly)
 			.map((imp) => ({
@@ -106,7 +129,7 @@ const EDGE_FACTS = {
 	// nothing is bound at runtime: an adapter may name a type of the code it
 	// must not import, and a store may type a value it holds without depending
 	// on the module that produces it.
-	typeImport: (facts) =>
+	[RELATION.TYPE_IMPORT]: (facts) =>
 		(facts.imports ?? [])
 			.filter((imp) => imp.resolved && imp.typeOnly)
 			.map((imp) => ({
@@ -120,7 +143,7 @@ const EDGE_FACTS = {
 	// EVERY way code leaves the module, whatever the spelling.
 	// The piece the edge belongs to is the piece that is published; a statement
 	// outside any piece (`export * from "x"`) is answered for by the module scope.
-	export: (facts) => {
+	[RELATION.EXPORT]: (facts) => {
 		const pieceFor = (name) => ((facts.candidates ?? []).some((c) => c.name === name) ? name : null);
 		const fromFacts = (facts.exports ?? []).map((exp) => {
 			const names = exp.named ?? [];
@@ -181,7 +204,7 @@ const EDGE_FACTS = {
 	// (`const a = b.c`, `const f = () => g()`). The edge points at the module the
 	// declared value comes FROM; a declaration of the file's own code points at the
 	// file itself, which is where it is declared.
-	declare: (facts) =>
+	[RELATION.DECLARE]: (facts) =>
 		(facts.candidates ?? []).map((c) => {
 			const calls = (c.calls ?? []).filter((x) => x.module && !x.receiverOnly);
 			const returned = (c.returns ?? [])[0]?.exprKind ?? null;
@@ -198,14 +221,14 @@ const EDGE_FACTS = {
 			};
 		}),
 	// Running another module's code.
-	call: callsOf,
+	[RELATION.CALL]: callsOf,
 	// Writing into a value this file does not own.
-	mutate: (facts) => assignmentsOf(facts, { mutate: true }),
+	[RELATION.MUTATE]: (facts) => assignmentsOf(facts, { mutate: true }),
 	// Writing into the piece's own value — no other file is involved, so the edge
 	// points at the file itself and the piece's own role decides.
-	assign: (facts) => assignmentsOf(facts, { mutate: false }),
+	[RELATION.ASSIGN]: (facts) => assignmentsOf(facts, { mutate: false }),
 	// Reading another module's value: `store.grammars`, `Settings.debug`.
-	read: readsOf,
+	[RELATION.READ]: readsOf,
 };
 
 // Which roles declare an ACTION for each relation: `Map<factKind, Map<roleSlug,
@@ -228,10 +251,10 @@ const declaredActions = (arch) => {
 // and every declared kind must have a producer. Checked at load, so a typo
 // fails loudly instead of silently disabling a rule.
 for (const kind of FACT_KINDS) {
-	if (!EDGE_FACTS[kind]) throw new Error(`kinds: relation \`${kind}\` is declared but has no producer`);
+	if (!EDGE_FACTS[kind]) throw configError.relationWithoutProducer({ relation: kind });
 }
 for (const kind of Object.keys(EDGE_FACTS)) {
-	if (!FACT_KINDS.includes(kind)) throw new Error(`kinds: \`${kind}\` has a producer but is not declared`);
+	if (!FACT_KINDS.includes(kind)) throw configError.undeclaredRelation({ relation: kind });
 }
 
-module.exports = { FACT_KINDS, EDGE_FACTS, declaredActions };
+module.exports = { RELATION, VIA, FACT_KINDS, EDGE_FACTS, CHANGES_STATE, changesState, declaredActions };

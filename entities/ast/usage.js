@@ -5,12 +5,18 @@
 // asked once per named candidate and only where the answer can change a verdict:
 // a name nothing outside its file mentions is a name nobody needs.
 
+const { notice } = require("../../report/notices");
+
 const countReferences = (node, sf, relOf) => {
 	if (typeof node.findReferencesAsNodes !== "function") return null;
 	let refs = [];
 	try {
 		refs = node.findReferencesAsNodes();
-	} catch {
+	} catch (error) {
+		// Who uses a name is a project-wide answer the checker may fail to give. The
+		// fact is then UNKNOWN (`null`), and the reason is reported.
+		notice(`the references of \`${node.getText?.() ?? "a name"}\` could not be read`, error && error.message ? error.message : String(error));
+
 		return null;
 	}
 	const file = sf.getFilePath();
@@ -53,7 +59,11 @@ const countImplementations = (node) => {
 	if (typeof node.getImplementations !== "function") return null;
 	try {
 		return node.getImplementations().length;
-	} catch {
+	} catch (error) {
+		// How many shapes implement this one is unknown when the checker fails; the
+		// reason is reported rather than counted as zero.
+		notice(`the implementations of \`${node.getText?.() ?? "a shape"}\` could not be read`, error && error.message ? error.message : String(error));
+
 		return null;
 	}
 };

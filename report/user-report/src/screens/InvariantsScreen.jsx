@@ -3,6 +3,11 @@ import styled from "styled-components";
 import { Badge, Panel, PanelHead, SearchBox, Title } from "../components/ui";
 import { navigate } from "../utils/router";
 
+// `fix` and `message` come from the config as either a string or `{ message }`.
+// Rendering the object itself is what made this screen blank (React #31), so both
+// shapes are unwrapped in ONE place.
+const text = (value) => (typeof value === "string" ? value : value?.message ?? value?.description ?? "");
+
 const Cond = styled.li`
 	font-family: ${(p) => p.theme.font.mono};
 	font-size: 12px;
@@ -71,10 +76,10 @@ const InvariantCard = ({ inv }) => (
 						<Cond key={j}>{c}</Cond>
 					))}
 				</ul>
-				{rule.message ? <div style={{ marginTop: 8, fontSize: 12.5, color: "#c3ccd9" }}>{rule.message}</div> : null}
-				{rule.fix ? <div style={{ marginTop: 6, fontSize: 12.5, color: "#8ce6a8" }}>{rule.fix}</div> : null}
-			</div>
-		))}
+				{rule.message ? <div style={{ marginTop: 8, fontSize: 12.5, color: "#c3ccd9" }}>{text(rule.message)}</div> : null}
+				{rule.fix ? <div style={{ marginTop: 6, fontSize: 12.5, color: "#8ce6a8" }}>{text(rule.fix)}</div> : null}
+					</div>
+				))}
 	</Panel>
 );
 

@@ -3,6 +3,8 @@
 // Nodes → path variants (one per parent) + the role homes they imply.
 
 const { nodePrefixRe, compileChild, rolesOf } = require("../../nodes/children");
+const { SCHEMA } = require("../schema");
+const configError = require("../../report/configErrors");
 
 const variantsOf = (n, parentPaths) => {
 	const parents = Array.isArray(n.parent) ? n.parent : n.parent ? [n.parent] : [null];
@@ -14,12 +16,12 @@ const variantsOf = (n, parentPaths) => {
 	});
 };
 
-const NODE_KEYS = new Set(["slug", "name", "parent", "children", "report", "role"]);
+const NODE_KEYS = new Set(SCHEMA.node);
 
 const make = (n) => {
 	for (const key of Object.keys(n)) {
 		if (NODE_KEYS.has(key)) continue;
-		throw new Error(`node ${n.slug}: unknown key \`${key}\` — a node is structure only (${[...NODE_KEYS].join(", ")}); roles, actions and \`where\` live on the codeRole`);
+		throw configError.unknownNodeKey({ node: n.slug, key, allowed: SCHEMA.node });
 	}
 	const parents = Array.isArray(n.parent) ? n.parent : n.parent ? [n.parent] : [null];
 	return {
@@ -41,7 +43,7 @@ const buildTree = (nodes) => {
 	const bySlug = Object.fromEntries(all.map((n) => [n.slug, n]));
 	for (const n of all) {
 		for (const p of n.parents) {
-			if (p != null && !bySlug[p]) throw new Error(`node ${n.slug}: unknown parent ${p}`);
+			if (p != null && !bySlug[p]) throw configError.unknownNodeParent({ node: n.slug, parent: p });
 		}
 	}
 	const resolvedPath = {};
@@ -59,7 +61,7 @@ const buildTree = (nodes) => {
 		for (const child of n.children) {
 			if (!child.nodeSlug) continue;
 			const target = bySlug[child.nodeSlug];
-			if (!target) throw new Error(`node ${n.slug}: child references unknown node ${child.nodeSlug}`);
+			if (!target) throw configError.unknownNodeChild({ node: n.slug, child: child.nodeSlug });
 			const compiled = compileChild(target.name);
 			child.re = compiled.re;
 			child.captures = compiled.captures;

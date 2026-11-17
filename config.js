@@ -11,11 +11,16 @@ const { loadArchitecture } = require("./main");
 const { checkFile } = require("./pipeline");
 const { DEFAULT_EXTS, DEFAULT_IGNORE_DIRS, DEFAULT_SIMILARITY } = require("./utils/pattern");
 const { createTsProject, loadSourceFile } = require("./entities/ast");
+const { loadConfigs } = require("./utils/configs");
 const { toRel } = require("./utils/imports");
 const { collectFiles } = require("./utils/files");
+const { notice } = require("./report/notices");
+const { renderConfigError } = require("./report/cli-report");
 const pkg = require("./package.json");
 
-const CONFIG_NAMES = ["architecture.yaml", "architecture.yml", "architecture.json", "architecture.config.js"];
+// The config is DATA. `.js` is not here on purpose: a config that has to be
+// evaluated is a second format, and this engine reads one (YAML/JSON).
+const CONFIG_NAMES = ["architecture.yaml", "architecture.yml", "architecture.json"];
 
 // The ts-morph project a run works on: the WHOLE repo, loaded once, with the
 // YAML aliases handed to the compiler. `references` asks who uses a name, and
@@ -41,15 +46,21 @@ const openProject = (repoRoot, absFiles, arch) => {
 	if (failed.length) {
 		const shown = failed.slice(0, REPORTED_LOAD_FAILURES).map((f) => `\n  ${f}`).join("");
 		const rest = failed.length - REPORTED_LOAD_FAILURES;
-		console.warn(`[follow-architecture] ${failed.length} file(s) are not part of the project, so no repo-wide answer (who calls a name, what a type is) includes them:${shown}${rest > 0 ? `\n  … and ${rest} more` : ""}`);
+		notice(`${failed.length} file(s) are not part of the project, so no repo-wide answer (who calls a name, what a type is) includes them`, `${shown}${rest > 0 ? `\n  … and ${rest} more` : ""}`);
 	}
 	return project;
 };
 
-const findRepoRoot = (from) => {
+// Where the repo starts: the folder that holds the architecture file. The file the
+// RULE was given is the strongest anchor — a project may call it anything, and
+// walking up until some DEFAULT name appears would anchor the run on a different
+// file (or, with none in sight, on whatever the editor's cwd happens to be). The
+// defaults are only for the case where nobody named one.
+const findRepoRoot = (from, configName = null) => {
+	const names = configName ? [configName, ...CONFIG_NAMES] : CONFIG_NAMES;
 	let dir = from;
 	while (true) {
-		for (const name of CONFIG_NAMES) {
+		for (const name of names) {
 			if (fs.existsSync(path.join(dir, name))) return dir;
 		}
 		const parent = path.dirname(dir);
@@ -138,8 +149,8 @@ const flushReports = () => {
 		} catch (error) {
 			// A report is a convenience — it must not break linting — but a SILENT
 			// failure left a stale file that looked like the fix had not been applied,
-			// so the reason is printed.
-			console.warn(`[follow-architecture] could not write ${bucket.outPath}: ${error && error.message ? error.message : error}`);
+			// so the reason is stated.
+			notice(`could not write ${bucket.outPath}`, error && error.message ? error.message : String(error));
 		}
 	}
 };
@@ -199,6 +210,10 @@ const rule = {
 						type: "object",
 						properties: {
 							config: { type: "string" },
+							// The TOOL's own inputs — tailwind.config.js, postcss.config.cjs, an SCSS
+							// entry. Key → path, read once per run; a key that is declared and
+							// unreadable is reported instead of silently empty.
+							configs: { type: "object" },
 							include: { type: "array" },
 							exts: { type: "array" },
 							similarity: { type: "number" },
@@ -221,10 +236,24 @@ const rule = {
 		const opts = typeof rawOpts === "string" ? { config: rawOpts } : rawOpts;
 		const filePath = context.filename ?? context.getFilename();
 		// Anchor on the file, not on cwd: the ESLint server's cwd can be any
-		// ancestor directory, while the architecture file sits at the repo root.
-		const repoRoot = findRepoRoot(path.dirname(filePath));
+		// ancestor directory, while the architecture file sits at the repo root. A
+		// named config file is the anchor; the default names are the fallback.
+		const namedConfig = typeof opts.config === "string" ? path.basename(opts.config) : null;
+		const repoRoot = findRepoRoot(path.dirname(filePath), namedConfig);
 		const rel = path.relative(repoRoot, filePath).split(path.sep).join("/");
-		const { arch, project, repoFiles, dedupe } = getRuleState(repoRoot, opts);
+		// A broken config is the reader's to fix, and they fix it in an editor — so
+		// it is REPORTED as one error on the file being linted, in the same words the
+		// CLI prints. Throwing instead buried the sentence in an ESLint stack trace.
+		// A crash of the engine itself is not a sentence and is left to throw.
+		let state;
+		try {
+			state = getRuleState(repoRoot, opts);
+		} catch (error) {
+			if (!error || !error.isConfigError) throw error;
+			const message = renderConfigError(error);
+			return { Program: (node) => context.report({ node, message }) };
+		}
+		const { arch, project, repoFiles, dedupe } = state;
 		// Scan scope (exts, ignore dirs, ignore globs) comes ONLY from the tool:
 		// its defaults + the ESLint rule options. The architecture yaml must not
 		// carry it — it describes the code, not how to scan it.
@@ -281,4 +310,7 @@ const flatConfig = (architecture, opts = {}) => {
 	return list;
 };
 
-module.exports = {plugin, openProject};
+// What the rule ACCEPTS is part of its contract, not an implementation detail.
+const ruleOptions = () => rule.meta.schema;
+
+module.exports = {plugin, openProject, ruleOptions};
