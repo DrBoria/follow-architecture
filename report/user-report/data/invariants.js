@@ -11,59 +11,14 @@ const { labelOf } = require("../../../entities/location");
 // `where` entries (utils/where.js) and are labelled by the same describer the
 // engine uses — never `String(entry)`.
 
-const { CONTAINERS: CONTAINER_OPS, QUANTIFIERS: QUANTIFIER_OPS, SCALAR_OPS } = require("../../../entities/operators");
+// The nested-query walk is shared with the browser describer; the options below
+// say only how THIS reader presents it. Report text is shown separately, so it
+// is not part of the condition.
+const { describeQuery } = require("../shared/describe");
 
-// Report text is shown separately; it is not part of the condition.
-const IGNORED = new Set(["report", "message", "fix", "key", "line"]);
+const IGNORED = ["report", "message", "fix", "key", "line"];
 
-
-const formatValue = (v) => {
-	if (typeof v === "string") return v;
-	if (typeof v === "number" || typeof v === "boolean") return String(v);
-	return JSON.stringify(v);
-};
-
-const walk = (value, trail, out) => {
-	if (value == null) return;
-	if (Array.isArray(value)) {
-		out.push({ path: trail.join("."), op: "=", value: formatValue(value) });
-		return;
-	}
-	if (typeof value !== "object") {
-		out.push({ path: trail.join("."), op: "=", value: formatValue(value) });
-		return;
-	}
-	for (const [key, child] of Object.entries(value)) {
-		if (IGNORED.has(key)) continue;
-		// `at` picks ONE element: it reads as `segments[-2]`, not as a field called
-		// `at` with children — the index belongs to the path.
-		if (key === "at") {
-			const { index, ...by } = child && typeof child === "object" ? child : { index: child };
-			const path = `${trail.join(".")}[${index}]`;
-			if (!Object.keys(by).length) out.push({ path, op: "is set", value: "" });
-			else walk(by, [path], out);
-			continue;
-		}
-		if (QUANTIFIER_OPS.has(key)) {
-			walk(child, [...trail, "[*]"], out);
-		} else if (CONTAINER_OPS.has(key)) {
-			walk(child, [...trail, key], out);
-		} else if (SCALAR_OPS[key]) {
-			const op = SCALAR_OPS[key];
-			out.push({ path: trail.join(".") || key, op, value: op === "is set" ? "" : formatValue(child) });
-		} else {
-			walk(child, [...trail, key], out);
-		}
-	}
-};
-
-const describeCondition = (query) => {
-	const out = [];
-	walk(query, [], out);
-	// `descendants[*].kind = X` reads better than `.some` colliding mid-path;
-	// `[*]` and `[n]` belong to the segment, so the dot before them goes.
-	return out.map((c) => `${c.path.replace(/\.\[/g, "[")} ${c.op} ${c.value}`.trim());
-};
+const describeCondition = (query) => describeQuery(query, { ignore: IGNORED, setValue: "" });
 
 const summarizeRule = (entry, inv) => {
 	const report = entry?.report ?? inv.report ?? null;

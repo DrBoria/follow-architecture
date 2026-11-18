@@ -5,6 +5,7 @@ import { TreeNode } from "../components/TreeNode";
 import { CodePanel } from "../components/code-preview/CodePanel";
 import { AccessGraph } from "../components/AccessGraph";
 import { kindColors } from "../theme";
+import { edgeKinds, edgeKindCounts, edgesOfKind } from "../utils/edges";
 import { navigate } from "../utils/router";
 
 const Layout = styled.div`
@@ -188,20 +189,9 @@ export const TreeScreen = ({ data, params }) => {
 	// often only interesting filtered to `import`, `call`, …
 	const [kind, setKind] = useState("all");
 	useEffect(() => setKind("all"), [node?.slug]);
-	const localKinds = useMemo(() => {
-		const out = [];
-		for (const e of localEdges) for (const k of e.kinds ?? [e.kind]) if (!out.includes(k)) out.push(k);
-		return out;
-	}, [localEdges]);
-	const kindCounts = useMemo(() => {
-		const map = new Map();
-		for (const e of localEdges) for (const k of e.kinds ?? [e.kind]) map.set(k, (map.get(k) ?? 0) + 1);
-		return map;
-	}, [localEdges]);
-	const shownEdges = useMemo(
-		() => (kind === "all" ? localEdges : localEdges.filter((e) => (e.kinds ?? [e.kind]).includes(kind))),
-		[localEdges, kind],
-	);
+	const localKinds = useMemo(() => edgeKinds(localEdges), [localEdges]);
+	const kindCounts = useMemo(() => edgeKindCounts(localEdges), [localEdges]);
+	const shownEdges = useMemo(() => edgesOfKind(localEdges, kind), [localEdges, kind]);
 
 	return (
 		<Layout>

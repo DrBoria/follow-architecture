@@ -227,13 +227,16 @@ const isNestedIn = (fn, candidate) => {
 // between them. A line count is `lines.length` — there is no second field for it.
 const endLine = (n) => n.getSourceFile().getLineAndColumnAtPos(n.getEnd()).line;
 
-const linesOf = (node) => {
-	const first = startLine(node);
-	const last = endLine(node);
+// The consecutive lines `first..last` inclusive, as a plain array — the one
+// spelling of "a span of lines" shared by `linesOf` (a node) and `linesOfRange`
+// (a comment's trivia range).
+const rangeLines = (first, last) => {
 	const out = [];
 	for (let i = first; i <= last; i += 1) out.push(i);
 	return out;
 };
+
+const linesOf = (node) => rangeLines(startLine(node), endLine(node));
 
 // Is the declaration published? `export` sits on the STATEMENT, never on the
 // value: for `export const f = () => …` it is written on the variable statement,
@@ -349,6 +352,7 @@ module.exports = {
 	startLine,
 	selfOf,
 	linesOf,
+	rangeLines,
 	isExported,
 	isMutable,
 	depthOf,

@@ -269,4 +269,4 @@ const passes = (value, filters, scope) => {
 	return filters.every((f) => matchFilter(value, f, scope));
 };
 
-module.exports = { COMPOSITION_OPS, KNOWN_OPS, matches, passes, innerFilterOf, hitOf };
+module.exports = { COMPOSITION_OPS, KNOWN_OPS, matches, passes, innerFilterOf, hitOf, isList, isObj };

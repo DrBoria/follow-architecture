@@ -5,19 +5,8 @@
 // provider / TypeORM entity expressible as a code role at all — and equally a
 // plain model. The engine knows nothing about what `@Component` means.
 
-const { SK, kindName, startLine, nodeText } = require("./tree");
-const { lastMemberName } = require("./properties");
-
-// Decorators on a node, by the NAME a filter can match: `@Component({…})` →
-// "Component", `@core.Input()` → "Input". Framework-agnostic — any decorator,
-// any framework.
-const decoratorsOf = (node) =>
-	(node.getDecorators?.() ?? []).map((d) => {
-		const expr = d.getExpression();
-		const name = expr.getKind() === SK.CallExpression ? (lastMemberName(expr.getExpression()) ?? nodeText(expr.getExpression())) : (lastMemberName(expr) ?? nodeText(expr));
-
-		return { name, full: expr.getText(), line: startLine(d) };
-	});
+const { kindName, startLine, nodeText } = require("./tree");
+const { decoratorsOf } = require("./modifiers");
 
 // What a member IS, beyond its name: a `#private` field, a `static` one, a
 // `readonly`/`accessor` one, the visibility word, its type and the fact that a

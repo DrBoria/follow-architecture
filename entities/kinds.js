@@ -48,6 +48,12 @@ const isRepoModule = (facts, module) => Boolean(module) && (facts.repoFiles ?? [
 // The line a candidate starts on — `lines` is the one place that says it.
 const lineOf = (c) => c.lines?.[0] ?? 1;
 
+// The shape EVERY edge has: the target, the piece it belongs to (whose role is
+// looked up in one place) and whether the target is a library, plus the
+// structured `fact` and its sentence. Producers differ only in these values;
+// any extra field (a call's `action`) rides along untouched.
+const edgeOf = (facts, edge) => ({ ...edge, role: roleOfPiece(facts, edge.piece) });
+
 // One producer per kind declared above, keyed by the name a config writes in
 // `of:`. A new relation is added in exactly two places: the list, and here.
 // Everything downstream (findings, report, graph) is driven by the config,
@@ -65,20 +71,18 @@ const callsOf = (facts) =>
 			// CODE that makes the edge — a role belongs to a function or a variable,
 			// never to the file: one file holds an action AND a view, and each is
 			// judged by its own role.
-			.map((call) => ({
-				path: call.module,
-				line: lineOf(c),
-				action: call.action,
-				piece: c.name ?? null,
-				role: roleOfPiece(facts, c.name),
-				// A library specifier is not a repo file: the edge says so, and the
-				// architecture decides what that means (a role may name the transport
-				// it calls; nobody owns `react`).
-				external: !isRepoModule(facts, call.module),
-				// `with`: what the call is given, by the file that declares each type.
-				fact: { kind: "call", action: call.action ?? null, module: call.module, with: call.arguments ?? [] },
-				what: `calls \`${call.action}\` of \`${call.module}\``,
-			})),
+			.map((call) =>
+				edgeOf(facts, {
+					path: call.module,
+					line: lineOf(c),
+					action: call.action,
+					piece: c.name ?? null,
+					external: !isRepoModule(facts, call.module),
+					// `with`: what the call is given, by the file that declares each type.
+					fact: { kind: "call", action: call.action ?? null, module: call.module, with: call.arguments ?? [] },
+					what: `calls \`${call.action}\` of \`${call.module}\``,
+				}),
+			),
 	);
 
 // Reading another module's value without invoking it: `requireRootStore().settings`,
@@ -86,15 +90,16 @@ const callsOf = (facts) =>
 // somebody else. A call is NOT a read (it has its own relation), and neither is
 // a write target (`f().x = …` is a `mutate`), so the three never overlap.
 const readsOf = (facts) =>
-	(facts.reads ?? []).map((r) => ({
-		path: r.module,
-		line: r.line ?? 1,
-		piece: r.piece ?? null,
-		role: roleOfPiece(facts, r.piece),
-		external: !isRepoModule(facts, r.module),
-		fact: { kind: "read", what: r.what ?? null, module: r.module },
-		what: `reads \`${r.what}\` of \`${r.module}\``,
-	}));
+	(facts.reads ?? []).map((r) =>
+		edgeOf(facts, {
+			path: r.module,
+			line: r.line ?? 1,
+			piece: r.piece ?? null,
+			external: !isRepoModule(facts, r.module),
+			fact: { kind: "read", what: r.what ?? null, module: r.module },
+			what: `reads \`${r.what}\` of \`${r.module}\``,
+		}),
+	);
 
 // EVERY write, split by the RELATION it forms — the split itself lives on the
 // fact (`assignments[].relation`, ast/assignments.js), so the edge producers and
@@ -103,21 +108,22 @@ const assignmentsOf = (facts, { mutate }) =>
 	(facts.candidates ?? []).flatMap((c) =>
 		(c.assignments ?? [])
 			.filter((a) => a.relation === (mutate ? RELATION.MUTATE : RELATION.ASSIGN))
-			.map((a) => ({
-				path: mutate ? (a.onThis ? facts.location.path : a.module) : facts.location.path,
-				line: a.line ?? lineOf(c),
-				piece: c.name ?? null,
-				role: roleOfPiece(facts, c.name),
-				external: mutate && !a.onThis ? !isRepoModule(facts, a.module) : false,
-				// THE FACT — what the code did, as data. Every word about it is
-				// written by `report/errorTypes/phrases.js`.
-				fact: { kind: mutate ? RELATION.MUTATE : RELATION.ASSIGN, target: a.target ?? null, module: a.module ?? null, method: a.method ?? null, onThis: Boolean(a.onThis) },
-				what: mutate
-					? a.onThis
-						? `changes \`${a.target}\` of its own file`
-						: `changes \`${a.target}\` of \`${a.module}\``
-					: `writes into \`${a.target}\`${a.method ? ` through \`${a.method}()\`` : ""}`,
-			})),
+			.map((a) =>
+				edgeOf(facts, {
+					path: mutate ? (a.onThis ? facts.location.path : a.module) : facts.location.path,
+					line: a.line ?? lineOf(c),
+					piece: c.name ?? null,
+					external: mutate && !a.onThis ? !isRepoModule(facts, a.module) : false,
+					// THE FACT — what the code did, as data. Every word about it is
+					// written by `report/errorTypes/phrases.js`.
+					fact: { kind: mutate ? RELATION.MUTATE : RELATION.ASSIGN, target: a.target ?? null, module: a.module ?? null, method: a.method ?? null, onThis: Boolean(a.onThis) },
+					what: mutate
+						? a.onThis
+							? `changes \`${a.target}\` of its own file`
+							: `changes \`${a.target}\` of \`${a.module}\``
+						: `writes into \`${a.target}\`${a.method ? ` through \`${a.method}()\`` : ""}`,
+				}),
+			),
 	);
 
 const EDGE_FACTS = {
@@ -127,18 +133,19 @@ const EDGE_FACTS = {
 	[RELATION.IMPORT]: (facts) =>
 		(facts.imports ?? [])
 			.filter((imp) => imp.resolved && !imp.typeOnly)
-			.map((imp) => ({
-				// A statement is not a piece of code with a role of its own: the module
-				// scope is the piece, and the file's roles answer for it. A `require`
-				// inside a function belongs to THAT function.
-				path: imp.resolved,
-				line: imp.line ?? 1,
-				piece: imp.piece ?? null,
-				role: roleOfPiece(facts, imp.piece),
-				external: !isRepoModule(facts, imp.resolved),
-				fact: { kind: "import", form: imp.form ?? null, source: imp.source ?? null, resolved: imp.resolved },
-				what: imp.form === "statement" ? `imports \`${imp.resolved}\`` : `requires \`${imp.source}\``,
-			})),
+			.map((imp) =>
+				edgeOf(facts, {
+					// A statement is not a piece of code with a role of its own: the module
+					// scope is the piece, and the file's roles answer for it. A `require`
+					// inside a function belongs to THAT function.
+					path: imp.resolved,
+					line: imp.line ?? 1,
+					piece: imp.piece ?? null,
+					external: !isRepoModule(facts, imp.resolved),
+					fact: { kind: "import", form: imp.form ?? null, source: imp.source ?? null, resolved: imp.resolved },
+					what: imp.form === "statement" ? `imports \`${imp.resolved}\`` : `requires \`${imp.source}\``,
+				}),
+			),
 	// `import type … from "x"` — a TYPE dependency. Split from `import` because
 	// nothing is bound at runtime: an adapter may name a type of the code it
 	// must not import, and a store may type a value it holds without depending
@@ -146,15 +153,16 @@ const EDGE_FACTS = {
 	[RELATION.TYPE_IMPORT]: (facts) =>
 		(facts.imports ?? [])
 			.filter((imp) => imp.resolved && imp.typeOnly)
-			.map((imp) => ({
-				path: imp.resolved,
-				line: imp.line ?? 1,
-				piece: imp.piece ?? null,
-				role: roleOfPiece(facts, imp.piece),
-				external: !isRepoModule(facts, imp.resolved),
-				fact: { kind: "typeImport", source: imp.source ?? null, resolved: imp.resolved },
-				what: `names a type of \`${imp.resolved}\``,
-			})),
+			.map((imp) =>
+				edgeOf(facts, {
+					path: imp.resolved,
+					line: imp.line ?? 1,
+					piece: imp.piece ?? null,
+					external: !isRepoModule(facts, imp.resolved),
+					fact: { kind: "typeImport", source: imp.source ?? null, resolved: imp.resolved },
+					what: `names a type of \`${imp.resolved}\``,
+				}),
+			),
 	// EVERY way code leaves the module, whatever the spelling.
 	// The piece the edge belongs to is the piece that is published; a statement
 	// outside any piece (`export * from "x"`) is answered for by the module scope.
@@ -197,21 +205,22 @@ const EDGE_FACTS = {
 										? `exports \`${exp.name}\` through CommonJS`
 										: "is exported through CommonJS";
 
-			return { path: exp.from ?? facts.location.path, line: exp.line ?? 1, piece, role: roleOfPiece(facts, piece), external: exp.from ? !isRepoModule(facts, exp.from) : false, fact, what };
+			return edgeOf(facts, { path: exp.from ?? facts.location.path, line: exp.line ?? 1, piece, external: exp.from ? !isRepoModule(facts, exp.from) : false, fact, what });
 		});
 		// `export const x = …` / `export function f` — a declaration modifier, with
 		// no statement to find it on.
 		const declared = (facts.candidates ?? [])
 			.filter((c) => c.exported)
-			.map((c) => ({
-				path: facts.location.path,
-				line: lineOf(c),
-				piece: c.name ?? null,
-				role: roleOfPiece(facts, c.name),
-				external: false,
-				fact: { kind: "export", form: "declared", names: c.name ? [c.name] : [], name: c.name ?? null, source: null, reExport: false },
-				what: "is exported",
-			}));
+			.map((c) =>
+				edgeOf(facts, {
+					path: facts.location.path,
+					line: lineOf(c),
+					piece: c.name ?? null,
+					external: false,
+					fact: { kind: "export", form: "declared", names: c.name ? [c.name] : [], name: c.name ?? null, source: null, reExport: false },
+					what: "is exported",
+				}),
+			);
 
 		return [...fromFacts, ...declared];
 	},
@@ -226,16 +235,15 @@ const EDGE_FACTS = {
 			const returned = (c.returns ?? [])[0]?.exprKind ?? null;
 			const renames = calls.length === 1 && (returned === "CallExpression" || returned === "PropertyAccessExpression") ? calls[0] : null;
 
-			return {
+			return edgeOf(facts, {
 				path: renames ? renames.module : facts.location.path,
 				line: lineOf(c),
 				piece: c.name ?? null,
-				role: roleOfPiece(facts, c.name),
 				external: renames ? !isRepoModule(facts, renames.module) : false,
 				fact: { kind: "declare", renames: renames ? { action: renames.action ?? null, module: renames.module } : null },
 				// A phrase that reads after the subject: "`f` <what>".
 				what: renames ? `re-declares \`${renames.action}\` of \`${renames.module}\`` : "is declared here",
-			};
+			});
 		}),
 	// Running another module's code.
 	[RELATION.CALL]: callsOf,

@@ -5,6 +5,7 @@ import { AccessGraph } from "../components/AccessGraph";
 import { RoleDetail } from "../components/RoleDetail";
 import { kindColors } from "../theme";
 import { nodeLabel, plural } from "../utils/format";
+import { edgeKinds, edgeKindCounts, edgesOfKind } from "../utils/edges";
 import { navigate } from "../utils/router";
 
 // The role screen: pick a code role on the left, see ITS boundary on the right.
@@ -133,21 +134,13 @@ export const GraphScreen = ({ data, params }) => {
 		const involved = new Set([role.slug, ...roleEdges.flatMap((e) => [e.from, e.to])]);
 		return all.filter((n) => involved.has(n.slug));
 	}, [access.roleNodes, role, roleEdges, showAll]);
-	const edges = useMemo(() => (kind === "all" ? roleEdges : roleEdges.filter((e) => (e.kinds ?? [e.kind]).includes(kind))), [roleEdges, kind]);
+	const edges = useMemo(() => edgesOfKind(roleEdges, kind), [roleEdges, kind]);
 
 	// The action names this role actually declares — the filter buttons.
-	const kinds = useMemo(() => {
-		const out = [];
-		for (const e of roleEdges) for (const k of e.kinds ?? [e.kind]) if (!out.includes(k)) out.push(k);
-		return out;
-	}, [roleEdges]);
+	const kinds = useMemo(() => edgeKinds(roleEdges), [roleEdges]);
 	const mentions = useMemo(() => (role ? access.mentions?.[role.slug] ?? [] : []), [access.mentions, role]);
 
-	const counts = useMemo(() => {
-		const map = new Map();
-		for (const e of roleEdges) for (const k of e.kinds ?? [e.kind]) map.set(k, (map.get(k) ?? 0) + 1);
-		return map;
-	}, [roleEdges]);
+	const counts = useMemo(() => edgeKindCounts(roleEdges), [roleEdges]);
 
 	const setRole = (slug) => navigate("graph", { role: slug });
 	const setKind = (k) => navigate("graph", { ...(roleSlug ? { role: roleSlug } : {}), ...(k !== "all" ? { kind: k } : {}), ...(focus ? { focus } : {}) });

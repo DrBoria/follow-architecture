@@ -6,8 +6,8 @@
 // no actions: only where it is, the lines it spans, whether it is published —
 // and what it is made of.
 
-const { SK, linesOf, isExported } = require("./tree");
-const { kindOf } = require("./kind");
+const { SK } = require("./tree");
+const { declarationFact } = require("./declaration");
 
 const isTypeNode = (n) => n.getKind() === SK.InterfaceDeclaration || n.getKind() === SK.TypeAliasDeclaration;
 
@@ -45,21 +45,8 @@ const membersOf = (node, depth = 0) => {
 	});
 };
 
-const typeFact = (node, rel) => ({
-	kind: kindOf(node),
-	name: node.getName() ?? null,
-	location: { path: rel ?? null, piece: null },
-	lines: linesOf(node),
-	returns: [],
-	calls: [],
-	branches: [],
-	assignments: [],
-	parameters: [],
-	// What the shape is made of: `PropertySignature` is data, `MethodSignature` is
-	// behaviour, and the rule reads the difference off `is`.
-	members: membersOf(node),
-	exported: isExported(node),
-	mutable: false,
-});
+// What the shape is made of: `PropertySignature` is data, `MethodSignature` is
+// behaviour, and the rule reads the difference off `is`.
+const typeFact = (node, rel) => declarationFact(node, rel, membersOf(node));
 
 module.exports = { typeFact, isTypeNode };

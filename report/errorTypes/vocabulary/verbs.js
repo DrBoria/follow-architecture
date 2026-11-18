@@ -1,43 +1,27 @@
 "use strict";
 
-// The words a relation is said with: third person, base form, and the noun.
-const VERBS = {
-	import: "imports",
-	typeImport: "names a type of",
-	export: "exports",
-	declare: "declares a name from",
-	call: "calls",
-	mutate: "changes",
-	assign: "writes into",
-	read: "reads",
+// The words a relation is said with — third person, noun, and base form — as
+// ONE table keyed by relation, so the three views below can never drift apart.
+// A new relation is added once, here.
+const WORD = {
+	import: { verb: "imports", noun: "import", base: "import" },
+	typeImport: { verb: "names a type of", noun: "type import", base: "name a type of" },
+	export: { verb: "exports", noun: "export", base: "export" },
+	declare: { verb: "declares a name from", noun: "declaration", base: "declare a name from" },
+	call: { verb: "calls", noun: "call", base: "call" },
+	mutate: { verb: "changes", noun: "mutation", base: "change" },
+	assign: { verb: "writes into", noun: "assignment", base: "write into" },
+	read: { verb: "reads", noun: "read", base: "read" },
 };
+
+const column = (field) => Object.fromEntries(Object.entries(WORD).map(([kind, words]) => [kind, words[field]]));
+
+const VERBS = column("verb");
+const NOUNS = column("noun");
+const BASES = column("base");
 
 const verbOf = (kind) => VERBS[kind] ?? `uses (${kind})`;
-
-const NOUNS = {
-	import: "import",
-	typeImport: "type import",
-	export: "export",
-	declare: "declaration",
-	call: "call",
-	mutate: "mutation",
-	assign: "assignment",
-	read: "read",
-};
-
 const nounOf = (kind) => NOUNS[kind] ?? `use (${kind})`;
-
-const BASES = {
-	import: "import",
-	typeImport: "name a type of",
-	export: "export",
-	declare: "declare a name from",
-	call: "call",
-	mutate: "change",
-	assign: "write into",
-	read: "read",
-};
-
 const baseVerbOf = (kind) => BASES[kind] ?? `use (${kind})`;
 
 module.exports = { VERBS, NOUNS, BASES, verbOf, nounOf, baseVerbOf };

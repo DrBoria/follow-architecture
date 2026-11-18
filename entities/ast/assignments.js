@@ -37,9 +37,18 @@ const bare = (node) => {
 
 	return n;
 };
-const rootNodeOf = (expr) => {
+
+// The root of a member chain: `a.b.c` → `a`, `f().x` → `f()`, `this.x` → `this`.
+// Both questions below ("what is written to?" and "which call is written
+// through?") walk the same access chain, so the walk is written once.
+const walkToRoot = (expr) => {
 	let node = bare(expr);
 	while (node && (node.getKind() === SK.PropertyAccessExpression || node.getKind() === SK.ElementAccessExpression)) node = bare(node.getExpression());
+
+	return node;
+};
+const rootNodeOf = (expr) => {
+	const node = walkToRoot(expr);
 
 	return node && node.getKind() === SK.Identifier ? node : null;
 };
@@ -81,8 +90,8 @@ const plainAssignments = (node, importMap) =>
 // The CALL a write lands in: `f().x = …` → `f()`, `f().a.b = …` → `f()`; null
 // when the left side is not rooted in a call at all.
 const callRootOf = (expr) => {
-	let e = bare(expr);
-	while (e && (e.getKind() === SK.PropertyAccessExpression || e.getKind() === SK.ElementAccessExpression)) e = bare(e.getExpression());
+	const e = walkToRoot(expr);
+
 	return e && e.getKind() === SK.CallExpression ? e : null;
 };
 

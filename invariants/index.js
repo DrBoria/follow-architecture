@@ -14,13 +14,11 @@
 // supplies the line and name for the finding. Nothing declares which fact lives
 // where: the facts answer for themselves.
 
-const { matches, innerFilterOf, hitOf, COMPOSITION_OPS } = require("../entities/queries");
+const { matches, innerFilterOf, hitOf, COMPOSITION_OPS, isObj } = require("../entities/queries");
 const { fileVars } = require("./name");
 const { resolveLocation } = require("../entities/location");
 const { entryKey, checkWhere } = require("../entities/location");
 const { fieldOf } = require("../utils/field");
-
-const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
 // A check's `report` is the message template for its findings, not a filter
 // key — strip it before matching so it is not treated as a fact field.

@@ -9,6 +9,7 @@ const { loadSourceFile, collectCandidates, collectFileFacts, importNameModules }
 const { labelOf } = require("../../../entities/location");
 const { classifyRoles } = require("../../../code-roles/classify");
 const { snippet, readText } = require("./scan");
+const { fieldOf } = require("../../../utils/field");
 
 const MAX_EXAMPLES_PER_ROLE = 8;
 
@@ -73,15 +74,11 @@ const listFiltersOf = (filter, prefix, out) => {
 	return out;
 };
 
-const valueAt = (obj, path) =>
-	path.split(".").reduce((acc, k) => {
-		if (acc == null) return undefined;
-		// A segment that lands ON a list yields that field in EVERY element —
-		// the same reading `fieldOf` gives a `$ref`, so `css.templates.declarations`
-		// is every declaration of every template, not a property of the array.
-		if (Array.isArray(acc)) return acc.flatMap((entry) => (entry == null ? [] : entry[k] ?? []));
-		return acc[k];
-	}, obj);
+// A field path off a fact — `utils/field.js#fieldOf` is the single reader of
+// `a.b.c`, list-aware the same way a `$ref` is (a segment on a list yields that
+// field in every element). Kept as a named alias because this module reads it
+// for the same reason the engine does.
+const valueAt = (obj, path) => fieldOf(obj, path);
 
 const matchedRanges = (c, infer) => {
 	const start = c.lines?.[0] ?? 1;

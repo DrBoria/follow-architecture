@@ -13,7 +13,7 @@
 // lines it covers and where it sits. What is NOT: whether the comment is wanted,
 // long, or in the right place — that is a role and a rule in the YAML.
 
-const { SK, isFunctionNode, isClassNode, kindFact } = require("./tree");
+const { SK, isFunctionNode, isClassNode, kindFact, rangeLines } = require("./tree");
 const { spelled } = require("./kind");
 const { nameOf } = require("./functions");
 
@@ -61,10 +61,7 @@ const nodesByPos = (sf) => {
 const linesOfRange = (sf, pos, end) => {
 	const first = sf.getLineAndColumnAtPos(pos).line;
 	const last = sf.getLineAndColumnAtPos(Math.max(pos, end - 1)).line;
-	const out = [];
-	for (let line = first; line <= last; line += 1) out.push(line);
-
-	return out;
+	return rangeLines(first, last);
 };
 
 // The deepest function or class a comment sits inside. A doc block above a

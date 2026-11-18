@@ -15,6 +15,33 @@ const { heritageOf } = require("./heritage");
 const { placeOf } = require("../location");
 const { notice } = require("../../report/notices");
 
+// The symbol a name really points at: an import is followed to the symbol it
+// aliases, anything else is its own. Every "whose value / whose type is this"
+// question in this file asks the checker the same way.
+const followAlias = (symbol, checker) => {
+	if (!symbol) return null;
+	const isImport = (symbol.getDeclarations?.() ?? []).some(isImportDecl);
+
+	return isImport ? checker.getAliasedSymbol(symbol) : symbol;
+};
+
+// Follow `X = Alias<typeof Y>` through at most four aliases to the file that
+// really declares the type. `firstDecl` is the caller's own declaration finder
+// (it knows its `relOf`); this loop is the same in both declaration walkers.
+const followDeclChain = (decl, checker, firstDecl) => {
+	for (let depth = 0; decl && decl.kind === "TypeAliasDeclaration" && depth < 4; depth += 1) {
+		const inner = decl.node.getTypeNode();
+		const arg = inner?.getTypeArguments?.()?.[0];
+		if (!arg) break;
+		const innerName = arg.getKindName() === "TypeQuery" ? arg.getExprName() : arg;
+		const next = firstDecl(checker.getSymbolAtLocation(innerName));
+		if (!next || next.file === decl.file) break;
+		decl = next;
+	}
+
+	return decl;
+};
+
 // ── Loading ─────────────────────────────────────────────────────────────────
 
 // One Project per run. Files are added explicitly (never from tsconfig), so the
@@ -128,15 +155,10 @@ const repoRelative = (file, repoRoot) => {
 // with the file repo-relative, or null when the checker cannot answer.
 const declaredFileOfNode = (typeNode, checker, repoRoot) => {
 	const relOf = (f) => repoRelative(f.getFilePath(), repoRoot);
-	const deref = (symbol) => {
-		if (!symbol) return null;
-		const decls = symbol.getDeclarations();
-		const isImport = decls.some(isImportDecl);
-		return isImport ? checker.getAliasedSymbol(symbol) : symbol;
-	};
 	const firstDecl = (symbol) => {
-		const s = deref(symbol);
+		const s = followAlias(symbol, checker);
 		const d = s?.getDeclarations?.()?.[0];
+
 		return d ? { kind: d.getKindName(), file: relOf(d.getSourceFile()), node: d } : null;
 	};
 	try {
@@ -179,15 +201,7 @@ const declaredFileOfNode = (typeNode, checker, repoRoot) => {
 				const hit = constraint ? declaredFileOfNode(constraint, checker, repoRoot) : null;
 				if (hit) return hit;
 			}
-			for (let depth = 0; decl && decl.kind === "TypeAliasDeclaration" && depth < 4; depth += 1) {
-				const inner = decl.node.getTypeNode();
-				const arg = inner?.getTypeArguments?.()?.[0];
-				if (!arg) break;
-				const innerName = arg.getKindName() === "TypeQuery" ? arg.getExprName() : arg;
-				const next = firstDecl(checker.getSymbolAtLocation(innerName));
-				if (!next || next.file === decl.file) break;
-				decl = next;
-			}
+			decl = followDeclChain(decl, checker, firstDecl);
 			if (decl) return decl;
 		}
 		return null;
@@ -208,15 +222,10 @@ const declaredFileOf = (param, checker, repoRoot) => declaredFileOfNode(param.ge
 // a call's return type) — only the symbol is left to follow.
 const declaredFileOfType = (type, checker, repoRoot) => {
 	const relOf = (f) => repoRelative(f.getFilePath(), repoRoot);
-	const resolved = (symbol) => {
-		if (!symbol) return null;
-		const decls = symbol.getDeclarations();
-		const isImport = decls.some(isImportDecl);
-		return isImport ? checker.getAliasedSymbol(symbol) : symbol;
-	};
 	const firstDecl = (symbol) => {
-		const r = resolved(symbol);
+		const r = followAlias(symbol, checker);
 		const d = r?.getDeclarations?.()?.[0];
+
 		return d ? { kind: d.getKindName(), file: relOf(d.getSourceFile()), node: d } : null;
 	};
 	try {
@@ -231,16 +240,7 @@ const declaredFileOfType = (type, checker, repoRoot) => {
 		}
 		let decl = firstDecl(type?.getSymbol?.());
 		if (!decl) decl = firstDecl(type?.getAliasSymbol?.());
-		for (let depth = 0; decl && decl.kind === "TypeAliasDeclaration" && depth < 4; depth += 1) {
-			const inner = decl.node.getTypeNode();
-			const arg = inner?.getTypeArguments?.()?.[0];
-			if (!arg) break;
-			const innerName = arg.getKindName() === "TypeQuery" ? arg.getExprName() : arg;
-			const next = firstDecl(checker.getSymbolAtLocation(innerName));
-			if (!next || next.file === decl.file) break;
-			decl = next;
-		}
-		return decl;
+		return followDeclChain(decl, checker, firstDecl);
 	} catch (error) {
 			// Same answer as above, for a type the checker already produced.
 			notice("the file declaring a type could not be resolved", error && error.message ? error.message : String(error));
@@ -290,9 +290,7 @@ const declaredFileOfExpr = (expr, checker, repoRoot, depth = 0) => {
 	const aliased = (symbol) => {
 		if (!symbol) return null;
 		try {
-			const isImport = (symbol.getDeclarations?.() ?? []).some(isImportDecl);
-
-			return isImport ? checker.getAliasedSymbol(symbol) : symbol;
+			return followAlias(symbol, checker);
 		} catch (error) {
 			// An import the checker cannot resolve — a package that is not installed, a
 			// path typo — has no aliased symbol. WHOSE VALUE THIS IS stays unknown, and
