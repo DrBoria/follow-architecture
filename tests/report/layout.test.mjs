@@ -102,4 +102,17 @@ describe("layout: labels and arrows never collide", () => {
 		expect(g.width).toBeGreaterThan(3 * COL.width);
 		expect(g.height).toBeGreaterThan(COL.row);
 	});
+
+	it("keeps every vertical lane inside the empty strip, however many arrows leave a box", () => {
+		// A dozen arrows from one plate used to walk the fixed 9px lane step past
+		// the strip: the vertical run — and the arrowhead at its end — landed
+		// UNDER the neighbouring plate. The lanes are spread inside the strip now.
+		const nodes = ["src", "apps", "components"].map(n);
+		const edges = [];
+		for (let i = 0; i < 12; i += 1) edges.push({ from: "src", to: "apps", kind: `k${i}`, kinds: [`k${i}`] });
+		for (let i = 0; i < 12; i += 1) edges.push({ from: "src", to: "components", kind: `m${i}`, kinds: [`m${i}`] });
+
+		const g = buildGraph(nodes, edges);
+		expect(violations(g)).toEqual([]);
+	});
 });

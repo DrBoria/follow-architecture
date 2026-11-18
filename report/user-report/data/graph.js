@@ -237,8 +237,13 @@ const { FACT_KINDS } = require("../../../entities/kinds");
 		return {
 			slug,
 			name: def.name ?? slug,
-			paths: places.length ? places : ["(no declared place)"],
+			// A role box is ALWAYS titled by the role's name — a box titled
+			// "(no declared place)" told the reader nothing about WHICH role it was.
+			// The places are listed inside when the tree names them; when it does
+			// not, the box says so on its own line (`note`), never as its title.
+			paths: places,
 			places,
+			note: places.length ? null : "no home — lives beside its caller",
 			// No file count: a role is not a folder, and a number here would be
 			// read as "files in this box" — which is exactly the confusion this
 			// view exists to remove.

@@ -101,7 +101,7 @@ const checkFile = (abs, arch, project, repoFiles, dedupe) => {
 	const fileFacts = collectFileFacts(sf, { rel: ctx.rel, repoFiles, aliases: ctx.aliases, repoRoot: arch.repoRoot, candidates: [] });
 	for (const c of candidates) c.file = fileFacts;
 
-	const { present, roleCtx, candidates: withRoles } = classifyRoles(candidates, arch.codeRoles ?? {}, arch);
+	const { present, roleCtx, candidates: withRoles } = classifyRoles(candidates, arch.codeRoles ?? {}, arch, fileFacts);
 	ctx.roles = present;
 	ctx.roleCtx = roleCtx;
 	// `c.file` is the snapshot every candidate carries, and roles are known only
@@ -176,7 +176,9 @@ const checkFile = (abs, arch, project, repoFiles, dedupe) => {
 	}
 
 	// File facts (candidates attached) — the invariants' filter target.
-	ctx.facts = { ...fileFacts, candidates: withRoles, roles: [...new Set(present)] };
+	// `repoFiles` travels with the facts: an edge's module is a repo FILE or a
+	// library SPECIFIER, and the file list is the one place that tells them apart.
+	ctx.facts = { ...fileFacts, candidates: withRoles, roles: [...new Set(present)], repoFiles };
 
 	// A piece of code no role describes has NO permissions — not "unknown", not
 	// "skipped": every rule in the config is a permission granted to a ROLE, and a

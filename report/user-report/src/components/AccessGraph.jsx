@@ -149,16 +149,19 @@ const fit = (text, size = 10.5, reserved = 0) => {
 const GLYPH = { delete: "✕", split: "⑂", rewrite: "✎", merge: "⊕", declare: "◇", create: "＋", move: "→" };
 
 const NodeBox = ({ box, node, active, onClick, onMore, dashed, loops = [], mark = null }) => {
-	// ONE path per box. A role is titled by its NAME and lists the places it may
-	// be met at; a folder is titled by its path and needs no second line repeating
-	// it — that line was the same string one row down, and it read as a mistake.
-	const title = node.places?.length ? (node.name ?? node.slug) : (node.paths?.[0] ?? node.slug);
+	// ONE path per box. A role is titled by its NAME — always, even when the tree
+	// names no home for it (the note line below says that); a folder is titled by
+	// its path and needs no second line repeating it — that line was the same
+	// string one row down, and it read as a mistake.
+	const title = node.places?.length || node.note ? (node.name ?? node.slug) : (node.paths?.[0] ?? node.slug);
 	const places = (node.places ?? []).filter((p) => p !== title);
 	// No second line for a folder: the title IS its path (shortened to the box
 	// width, the full one in the tooltip). Repeating it one row down was the
 	// "why is the same path printed twice" look. A box that has an ACTION to show
 	// uses that line for it — a rule with no destination still says what it wants.
-	const label = node.action ? `${GLYPH[node.action] ?? "•"} ${node.action}` : null;
+	// A role with no declared home uses it for the NOTE — which role this box is
+	// stays readable, and "no home" is a statement, not the box's whole identity.
+	const label = node.action ? `${GLYPH[node.action] ?? "•"} ${node.action}` : (node.note ?? null);
 	// Every `y` below comes from `textFlow` — the same function the layout uses to
 	// size the box. Hardcoding the offsets here is what let a badge land on text.
 	const flow = textFlow({ ...node, places }, loops.length, label);
@@ -190,7 +193,7 @@ const NodeBox = ({ box, node, active, onClick, onMore, dashed, loops = [], mark 
 					{mark === "wrong" ? "✕" : "✓"}
 				</text>
 			) : null}
-			<title>{places.length ? `${node.name ?? node.slug}: ${places.join(", ")}` : node.paths?.[0] ?? node.slug}</title>
+			<title>{places.length ? `${node.name ?? node.slug}: ${places.join(", ")}` : node.note ? `${node.name ?? node.slug} — ${node.note}` : (node.paths?.[0] ?? node.slug)}</title>
 			{/* A box grows to fit the arrows leaving it, so the text is centred in
 			    whatever height it got instead of hugging the top edge. */}
 			<text x={box.x + 10} y={ty(flow.nameY)} fill="#d7dee8" fontSize="10.5" fontWeight="600" fontFamily="monospace">

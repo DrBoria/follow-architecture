@@ -49,10 +49,12 @@ describe("the fact layer's contract", () => {
 			// (`getHost` is a view, `storeSettings` in the same file is an action),
 			// so the edge carries both. `call` names the callee as well — "which
 			// function of that module" is what tells a declared store accessor
-			// from any other reach. `fact` is the same observation with NO words in
-			// it: `report/errorTypes/phrases.js` writes the sentence, so the AST
-			// layer cannot disagree with the report about what happened.
-			const allowed = kind === "call" ? ["action", "fact", "line", "path", "piece", "role", "what"] : ["fact", "line", "path", "piece", "role", "what"];
+			// from any other reach. `external` says the target is a library
+			// specifier, not a scanned repo file. `fact` is the same observation
+			// with NO words in it: `report/errorTypes/phrases.js` writes the
+			// sentence, so the AST layer cannot disagree with the report about what
+			// happened.
+			const allowed = kind === "call" ? ["action", "external", "fact", "line", "path", "piece", "role", "what"] : ["external", "fact", "line", "path", "piece", "role", "what"];
 				expect(Object.keys(e).sort()).toEqual(allowed);
 				expect(typeof e.path).toBe("string");
 				expect(typeof e.line).toBe("number");

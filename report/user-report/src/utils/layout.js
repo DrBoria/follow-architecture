@@ -34,9 +34,11 @@ export const textFlow = (node, loops = 0, label = null) => {
 	for (let i = 0; i < shown; i++) placeYs.push(lineY(1 + i));
 	// `+N more` sits on the NEXT line of the same rhythm, not at a fixed offset.
 	const overflowY = places > 3 ? lineY(1 + shown) : null;
-	// A box without places may carry ONE more line (a description) — and only
+	// A box without places may carry ONE more line — a description (`label`) or
+	// the node's own `note` ("no home — lives beside its caller") — and only
 	// when it says something the title does not already say.
-	const labelY = !places && label ? lineY(1) : null;
+	const subline = label ?? node?.note ?? null;
+	const labelY = !places && subline ? lineY(1) : null;
 	const textLines = places ? shown + (places > 3 ? 1 : 0) : labelY != null ? 1 : 0;
 	const badgeYs = [];
 	for (let i = 0; i < loops; i++) badgeYs.push(lineY(1 + textLines + i));
@@ -305,11 +307,39 @@ export const buildGraph = (nodes, edges, options = {}) => {
 	// One counter for EVERY vertical run, keyed by the strip it stands in: two
 	// arrows — of the same action or of different ones — never share a vertical
 	// line, so a green `call` and a blue `import` can never look like one arrow.
+	//
+	// A lane lives in the EMPTY STRIP between two columns and nowhere else. The
+	// strip is `gap` wide; the usable part keeps a margin off both box edges so
+	// a wire never touches a plate. Lanes are spread EVENLY across that part:
+	// the old fixed 9px step walked past the strip once a box had a dozen
+	// arrows, and the vertical run — with the arrowhead at its end — landed
+	// UNDER the neighbouring plate. Count first, then place: every lane of a
+	// strip gets its own x inside the strip, however many there are.
+	const LANE_MARGIN = Math.min(14, gap * 0.15);
+	const laneCounts = new Map();
+	for (const p of plans) {
+		const a = positions.get(p.edge.from);
+		const b = positions.get(p.edge.to);
+		const exitX = p.forward ? a.x + a.w : a.x;
+		const entryX = p.forward ? b.x : b.x + b.w;
+		const outKey = `out|${Math.round(exitX)}`;
+		laneCounts.set(outKey, (laneCounts.get(outKey) ?? 0) + 1);
+		if (p.side !== "gap" && p.side !== "gap-back") {
+			const inKey = `in|${Math.round(entryX)}`;
+			laneCounts.set(inKey, (laneCounts.get(inKey) ?? 0) + 1);
+		}
+	}
 	const lanes = new Map();
 	const laneAt = (base, dir, key) => {
 		const n = lanes.get(key) ?? 0;
 		lanes.set(key, n + 1);
-		return base + dir * (gap * 0.15 + n * 9);
+		const total = laneCounts.get(key) ?? 1;
+		const usable = gap - LANE_MARGIN * 2;
+		// Evenly spread, never past the strip: with one lane it sits at the near
+		// third, with many they fill the strip but stay inside it.
+		const step = usable / (total + 1);
+
+		return base + dir * (LANE_MARGIN + step * (n + 1));
 	};
 	const links = plans.map((p) => {
 		const a = positions.get(p.edge.from);

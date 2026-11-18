@@ -99,6 +99,63 @@ describe("css — a styled-components block", () => {
 	});
 });
 
+describe("css — a template is CSS by its CONTENT, not by its tag's name", () => {
+	// Any tagged template whose substituted text reads as CSS becomes facts —
+	// `createGlobalStyle`, `keyframes`, a tag nobody has heard of. A template
+	// whose text is another language (SQL, GraphQL, JSON, prose) does not,
+	// whatever it is called. No list of tag names, no consumer option.
+	const CODE = `
+export const Global = createGlobalStyle\`
+  html { color: #000; }
+\`;
+export const Motion = keyframes\`
+  from { opacity: 0; }
+  to { opacity: 1; }
+\`;
+export const Query = sql\`
+  SELECT * FROM users WHERE id = 1
+\`;
+export const Data = json\`
+  {"a": 1, "b": [2]}
+\`;
+export const Words = prose\`
+  hello world, this is just text
+\`;
+`;
+
+	const candidatesOf = () => {
+		const rel = "a/global.tsx";
+		const sf = loadSourceFile(createTsProject(), rel, CODE);
+		const candidates = [
+			{ name: "Global", lines: [2, 4] },
+			{ name: "Motion", lines: [5, 8] },
+			{ name: "Query", lines: [9, 11] },
+			{ name: "Data", lines: [12, 14] },
+			{ name: "Words", lines: [15, 17] },
+		];
+		css.attachToCandidates(candidates, { sf });
+
+		return candidates;
+	};
+
+	it("a CSS template is read whatever its tag is called", () => {
+		const [global, motion] = candidatesOf();
+		expect(global.css.templates).toHaveLength(1);
+		expect(global.css.templates[0].tag).toBe("createGlobalStyle");
+		expect(global.css.templates[0].declarations.map((decl) => decl.prop)).toEqual(["color"]);
+		expect(motion.css.templates).toHaveLength(1);
+		expect(motion.css.templates[0].tag).toBe("keyframes");
+		expect(motion.css.templates[0].declarations.map((decl) => decl.prop)).toEqual(["opacity", "opacity"]);
+	});
+
+	it("a template in another language is not CSS, whatever its tag is called", () => {
+		const [, , query, data, words] = candidatesOf();
+		expect(query.css).toBeUndefined();
+		expect(data.css).toBeUndefined();
+		expect(words.css).toBeUndefined();
+	});
+});
+
 describe("css — SCSS is read, not skipped", () => {
 	// The exact shapes that make SCSS not CSS. Every one of them used to produce
 	// "no facts", which reads as "nothing hardcoded" — the opposite of the truth.

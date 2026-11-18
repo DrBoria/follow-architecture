@@ -62,4 +62,32 @@ export const Plain = () => <div />;`);
 
 		expect(candidates.find((c) => c.name === "Card" && c.kind.own.is === "ArrowFunction").css).toBeUndefined();
 	});
+
+	it("a class list written once as a const string is read through its name", () => {
+		const candidates = candidatesOf(`const ButtonTheme = "text-[#fff] border p-2 md:hover:p-4";
+export const Card = () => <div className={ButtonTheme} />;`);
+
+		const card = candidates.find((c) => c.name === "Card" && c.kind.own.is === "ArrowFunction");
+		expect(card.css.classes.map((c) => c.raw)).toEqual(["text-[#fff]", "border", "p-2", "md:hover:p-4"]);
+		// The arbitrary value is still flagged — the reading is the same one.
+		expect(card.css.classes.find((c) => c.raw === "text-[#fff]").arbitrary).toBe(true);
+		// Every class carries the line of the ATTRIBUTE that uses it.
+		expect(card.css.classes.every((c) => c.line === 2)).toBe(true);
+	});
+
+	it("a reassigned binding is not a static class list", () => {
+		const candidates = candidatesOf(`let cls = "flex";
+cls = "p-4";
+export const Card = () => <div className={cls} />;`);
+
+		expect(candidates.find((c) => c.name === "Card" && c.kind.own.is === "ArrowFunction").css).toBeUndefined();
+	});
+
+	it("a template with interpolation is not a static class list", () => {
+		const candidates = candidatesOf(`const size = "p-4";
+const cls = \`flex \${size}\`;
+export const Card = () => <div className={cls} />;`);
+
+		expect(candidates.find((c) => c.name === "Card" && c.kind.own.is === "ArrowFunction").css).toBeUndefined();
+	});
 });

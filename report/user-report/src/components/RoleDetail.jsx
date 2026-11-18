@@ -186,12 +186,13 @@ export const RoleDetail = ({ role, nodes, graph = null, showInfer = true }) => {
 
 			{example && codeOf(example) ? (
 				<Section $wide>
-					<Label>real example</Label>
+					<Label>real example — matched lines tinted</Label>
 					<CodePanel
 						tone="good"
 						title={`${example.name} — ${example.file}:${example.line}`}
 						code={codeOf(example)}
 						max="230px"
+						matched={example.matched ?? null}
 					/>
 				</Section>
 			) : (

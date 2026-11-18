@@ -27,12 +27,67 @@ const syntax = require("./syntax");
 
 // ── the template ────────────────────────────────────────────────────────────
 
-// `styled.button<Props>\`…\`` / `css\`…\`` / `styled(Button)\`…\`` — the tag is a
-// name, not a rule: every consumer spells it the same way.
-const isStyledTag = (tag) => {
-	const text = String(tag ?? "");
+// A tagged template is CSS when its CONTENT is CSS — the tag's name is not the
+// question. `styled.div`, `css`, `createGlobalStyle`, `keyframes` and any tag
+// added tomorrow all carry the same grammar, and the grammar is what the facet
+// already reads: postcss parses the substituted text, and css-tree knows the
+// property vocabulary. A template whose text is SQL, GraphQL, HTML, JSON or
+// prose is rejected by that reading, so it never becomes `css.*` facts. No
+// list of tag names lives here — a library's vocabulary is not the engine's.
+const isCssDocument = (text) => {
+	const provider = syntax.byId("css");
+	if (!provider) return false;
+	let root;
+	try {
+		root = provider.parse(text);
+	} catch {
+		return false;
+	}
+	if (!root) return false;
 
-	return /^styled(\.|$|\()/.test(text) || text === "css" || /^styled\.[A-Za-z]/.test(text);
+	const cssTree = require("css-tree");
+	const properties = cssTree.lexer.properties ?? {};
+	// A property is CSS when the grammar knows it: a custom property (`--x`),
+	// or a name (vendor prefix and hack stripped by the parser) in css-tree's
+	// dictionary. A `$var` is another syntax's declaration, not a CSS property.
+	const knownProperty = (raw) => {
+		if (/^--[\w-]+$/.test(raw)) return true;
+		if (raw.startsWith("$")) return false;
+		let parsed;
+		try {
+			parsed = cssTree.property(raw);
+		} catch {
+			return false;
+		}
+		if (parsed.custom) return true;
+
+		return Object.prototype.hasOwnProperty.call(properties, parsed.basename);
+	};
+
+	let declarations = 0;
+	let known = 0;
+	let rules = 0;
+	let badSelector = 0;
+	root.walkDecls((decl) => {
+		declarations += 1;
+		if (knownProperty(decl.prop)) known += 1;
+	});
+	root.walkRules((rule) => {
+		rules += 1;
+		const selector = String(rule.selector ?? "").trim();
+		// An empty selector, or one opening with a brace/quote/bracket, is a
+		// data format's block (JSON, an INI section) — not a CSS selector.
+		if (!selector || /^[[{"']/.test(selector)) badSelector += 1;
+	});
+
+	// Nothing structured: an empty template or a comment is not a stylesheet.
+	if (!declarations && !rules) return false;
+	if (badSelector) return false;
+	// Declarations the grammar does not know at all: YAML, a variable-only
+	// SCSS fragment — a different language, not this facet's business.
+	if (declarations && !known) return false;
+
+	return true;
 };
 
 // The template as parseable CSS plus the map back to the expressions it quotes.
@@ -90,10 +145,16 @@ const leadingCommentOf = (node) => {
 const templateFacts = (node) => {
 	const { text, exprs } = templateSource(node);
 	const facts = syntax.byId("css").facts(text, { exprs });
+	// Declaration lines are numbered INSIDE the template text (postcss counts
+	// from 1 at the first character after the backtick). `startLine` is the
+	// template's own line in the FILE, so a consumer can place any declaration
+	// on the file's line grid: startLine + decl.line - 1.
+	const startLine = node.getStartLineNumber?.() ?? null;
 
 	return {
 		tag: node.getTag?.().getText() ?? "",
-		line: node.getStartLineNumber?.() ?? null,
+		line: startLine,
+		startLine,
 		comment: leadingCommentOf(node),
 		...facts,
 	};
@@ -111,13 +172,16 @@ const stylesheetFacts = (rel, text) => {
 
 // ── attaching to candidates ─────────────────────────────────────────────────
 
-// Every styled/CSS template in the file, as its own fact set.
+// Every CSS template in the file, as its own fact set. ANY tagged template is
+// offered to the grammar: the ones whose substituted text reads as CSS become
+// facts, the rest (SQL, GraphQL, prose, …) do not. The tag's name is recorded
+// as a fact, never used as the gate.
 const styledTemplates = (sf) => {
 	const { SK } = require("../entities/ast/tree");
 
 	return sf
 		.getDescendantsOfKind(SK.TaggedTemplateExpression)
-		.filter((node) => isStyledTag(node.getTag?.().getText?.() ?? ""));
+		.filter((node) => isCssDocument(templateSource(node).text));
 };
 
 // The piece that DECLARES something the CSS facet read: the candidate whose line

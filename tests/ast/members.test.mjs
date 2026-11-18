@@ -88,3 +88,48 @@ describe("members — what is NOT an object literal", () => {
 		expect(depth).toBeGreaterThan(1);
 	});
 });
+
+describe("members — a TYPE shape nests the same way a value does", () => {
+	const SHAPE = `export interface Shape {
+  name: string;
+  colors: {
+    section: string;
+    sectionContent: string;
+  };
+  other: SomeReference;
+}`;
+
+	it("an inline type-literal member carries its own members", () => {
+		const facts = candidate(SHAPE, "Shape");
+		const colors = facts.members.find((member) => member.name === "colors");
+
+		expect(colors.is).toBe("PropertySignature");
+		expect(colors.members.map((member) => [member.name, member.type])).toEqual([
+			["section", "string"],
+			["sectionContent", "string"],
+		]);
+	});
+
+	it("a scalar member and a type REFERENCE have no members to walk", () => {
+		const facts = candidate(SHAPE, "Shape");
+
+		expect(facts.members.find((member) => member.name === "name").members).toBeUndefined();
+		// Following a reference is the checker's job, not the syntax reader's.
+		expect(facts.members.find((member) => member.name === "other").members).toBeUndefined();
+	});
+
+	it("deep type nesting stops instead of walking forever", () => {
+		const code = "export interface Deep { a: { b: { c: { d: { e: { f: string } } } } } }";
+		const facts = candidate(code, "Deep");
+
+		let level = { members: facts.members };
+		let depth = 0;
+		while (level?.members?.[0]?.members) {
+			level = level.members[0];
+			depth += 1;
+			expect(depth).toBeLessThan(10);
+		}
+
+		expect(depth).toBeGreaterThan(1);
+	});
+});

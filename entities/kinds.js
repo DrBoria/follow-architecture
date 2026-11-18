@@ -38,6 +38,13 @@ const changesState = (relation) => CHANGES_STATE.has(relation);
 // an arrow is the same piece seen twice, and only one of the two carries the role.
 const roleOfPiece = (facts, piece) => (piece ? ((facts.candidates ?? []).find((c) => c.name === piece && c.role)?.role ?? null) : null);
 
+// Is a module path a FILE of this repo? The import map answers with a repo file
+// for repo code and with the SPECIFIER as written (`@apollo/client`, `fs`) for a
+// library — a specifier is not a path, and the scanned file list is the one
+// place that says which paths are repo code. No `node_modules` string test: a
+// monorepo workspace may live anywhere, the file list already knows.
+const isRepoModule = (facts, module) => Boolean(module) && (facts.repoFiles ?? []).includes(module);
+
 // The line a candidate starts on — `lines` is the one place that says it.
 const lineOf = (c) => c.lines?.[0] ?? 1;
 
@@ -64,6 +71,10 @@ const callsOf = (facts) =>
 				action: call.action,
 				piece: c.name ?? null,
 				role: roleOfPiece(facts, c.name),
+				// A library specifier is not a repo file: the edge says so, and the
+				// architecture decides what that means (a role may name the transport
+				// it calls; nobody owns `react`).
+				external: !isRepoModule(facts, call.module),
 				// `with`: what the call is given, by the file that declares each type.
 				fact: { kind: "call", action: call.action ?? null, module: call.module, with: call.arguments ?? [] },
 				what: `calls \`${call.action}\` of \`${call.module}\``,
@@ -80,6 +91,7 @@ const readsOf = (facts) =>
 		line: r.line ?? 1,
 		piece: r.piece ?? null,
 		role: roleOfPiece(facts, r.piece),
+		external: !isRepoModule(facts, r.module),
 		fact: { kind: "read", what: r.what ?? null, module: r.module },
 		what: `reads \`${r.what}\` of \`${r.module}\``,
 	}));
@@ -96,6 +108,7 @@ const assignmentsOf = (facts, { mutate }) =>
 				line: a.line ?? lineOf(c),
 				piece: c.name ?? null,
 				role: roleOfPiece(facts, c.name),
+				external: mutate && !a.onThis ? !isRepoModule(facts, a.module) : false,
 				// THE FACT — what the code did, as data. Every word about it is
 				// written by `report/errorTypes/phrases.js`.
 				fact: { kind: mutate ? RELATION.MUTATE : RELATION.ASSIGN, target: a.target ?? null, module: a.module ?? null, method: a.method ?? null, onThis: Boolean(a.onThis) },
@@ -122,6 +135,7 @@ const EDGE_FACTS = {
 				line: imp.line ?? 1,
 				piece: imp.piece ?? null,
 				role: roleOfPiece(facts, imp.piece),
+				external: !isRepoModule(facts, imp.resolved),
 				fact: { kind: "import", form: imp.form ?? null, source: imp.source ?? null, resolved: imp.resolved },
 				what: imp.form === "statement" ? `imports \`${imp.resolved}\`` : `requires \`${imp.source}\``,
 			})),
@@ -137,6 +151,7 @@ const EDGE_FACTS = {
 				line: imp.line ?? 1,
 				piece: imp.piece ?? null,
 				role: roleOfPiece(facts, imp.piece),
+				external: !isRepoModule(facts, imp.resolved),
 				fact: { kind: "typeImport", source: imp.source ?? null, resolved: imp.resolved },
 				what: `names a type of \`${imp.resolved}\``,
 			})),
@@ -182,7 +197,7 @@ const EDGE_FACTS = {
 										? `exports \`${exp.name}\` through CommonJS`
 										: "is exported through CommonJS";
 
-			return { path: exp.from ?? facts.location.path, line: exp.line ?? 1, piece, role: roleOfPiece(facts, piece), fact, what };
+			return { path: exp.from ?? facts.location.path, line: exp.line ?? 1, piece, role: roleOfPiece(facts, piece), external: exp.from ? !isRepoModule(facts, exp.from) : false, fact, what };
 		});
 		// `export const x = …` / `export function f` — a declaration modifier, with
 		// no statement to find it on.
@@ -193,6 +208,7 @@ const EDGE_FACTS = {
 				line: lineOf(c),
 				piece: c.name ?? null,
 				role: roleOfPiece(facts, c.name),
+				external: false,
 				fact: { kind: "export", form: "declared", names: c.name ? [c.name] : [], name: c.name ?? null, source: null, reExport: false },
 				what: "is exported",
 			}));
@@ -215,6 +231,7 @@ const EDGE_FACTS = {
 				line: lineOf(c),
 				piece: c.name ?? null,
 				role: roleOfPiece(facts, c.name),
+				external: renames ? !isRepoModule(facts, renames.module) : false,
 				fact: { kind: "declare", renames: renames ? { action: renames.action ?? null, module: renames.module } : null },
 				// A phrase that reads after the subject: "`f` <what>".
 				what: renames ? `re-declares \`${renames.action}\` of \`${renames.module}\`` : "is declared here",

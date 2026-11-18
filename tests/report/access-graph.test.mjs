@@ -110,6 +110,30 @@ describe("buildAccessGraph", () => {
 		expect(g.violations).toHaveLength(1);
 		expect(g.violations[0]).toMatchObject({ kind: "import", from: "feature", to: "store", file: "a.ts" });
 	});
+
+	it("a role box is titled by its NAME even when the tree names no home", () => {
+		// `action` has a home; a role with none used to be titled "(no declared
+		// place)" — the reader could not tell WHICH role the box was. Now the name
+		// is the title and the absence of a home is a note on its own line.
+		const withHomeless = buildAccessGraph({
+			arch: {
+				nodes: treeOf({ storeModel: ["store"] }, nodes),
+				codeRoles: {
+					storeModel: { name: "store model", actions: { import: where({ type: "role", role: "helper" }) } },
+					helper: { name: "helper" },
+				},
+			},
+			nodes,
+			findings: [],
+		});
+		const helper = withHomeless.roleNodes.find((n) => n.slug === "helper");
+		expect(helper.name).toBe("helper");
+		expect(helper.paths).toEqual([]);
+		expect(helper.note).toMatch(/no home/);
+		const store = withHomeless.roleNodes.find((n) => n.slug === "storeModel");
+		expect(store.note).toBeNull();
+		expect(store.paths.length).toBeGreaterThan(0);
+	});
 });
 
 describe("arrow direction and cycles", () => {

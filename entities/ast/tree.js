@@ -325,8 +325,10 @@ const kindFact = (n, initializer) => {
 		// around and below this node" is ONE fact, not six.
 		descendants: descendantsOf(n),
 		// Same descriptor as every other facet: `is` says what it is, and an
-		// initializer adds where it comes from and what it is made of.
-		initializer: initializer ? { is: initializer.is, origin: initializer.origin, members: initializer.members ?? [] } : null,
+		// initializer adds where it comes from and what it is made of. A static
+		// string initializer keeps its text (`value`) — a class list written once
+		// as `const cls = "flex p-4"` is readable through its name.
+		initializer: initializer ? { is: initializer.is, origin: initializer.origin, members: initializer.members ?? [], ...(initializer.value !== undefined ? { value: initializer.value } : {}) } : null,
 	};
 };
 

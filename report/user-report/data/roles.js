@@ -18,6 +18,135 @@ const rawRoles = (raw) => {
 	return new Map(Object.entries(raw).map(([k, v]) => [v.slug ?? k, v]));
 };
 
+// WHERE the role's infer actually matched, as line ranges RELATIVE to the
+// snippet's first line — so the reader sees WHICH declarations make this piece
+// a `cssVariable` / `styleInversion` / … instead of three identical-looking
+// windows. The ranges are derived from the ROLE'S OWN infer filters run against
+// the candidate's facts (the same `hitOf` the engine uses), so the mark can
+// never disagree with the classification: `styledBlock` marks the whole block,
+// `cssVariable` marks the declarations that read a variable, `styleInversion`
+// marks the state declarations that swap the pair. Template-relative CSS lines
+// are shifted by the template's own start line, because the facet numbers them
+// inside the template text.
+const { hitOf, innerFilterOf, KNOWN_OPS } = require("../../../entities/queries");
+
+// The list filters the role's infer addresses, collected with their field path
+// (`css.templates`, `css.templates.declarations`, `css.classes`). Composition
+// (`or`/`and`/…) is looked through, quantifiers unwrapped — the same reading
+// the invariant report uses. Operator operands (`in: [...]`, `gt: 0`) are
+// demands on a value, not roads to a deeper list, so they are never walked.
+// The operator vocabulary is the engine's own (`KNOWN_OPS`), never a copy.
+const listFiltersOf = (filter, prefix, out) => {
+	if (!filter || typeof filter !== "object") return out;
+	if (Array.isArray(filter)) {
+		for (const f of filter) listFiltersOf(f, prefix, out);
+		return out;
+	}
+	for (const [key, sub] of Object.entries(filter)) {
+		if (key === "or" || key === "and" || key === "xor") {
+			for (const f of Array.isArray(sub) ? sub : [sub]) listFiltersOf(f, prefix, out);
+			continue;
+		}
+		if (key === "not") {
+			listFiltersOf(sub, prefix, out);
+			continue;
+		}
+		// An operator other than composition/quantifier is a demand on the
+		// current value — it names no deeper field.
+		if (KNOWN_OPS.has(key)) continue;
+		if (!sub || typeof sub !== "object") continue;
+		const path = prefix ? `${prefix}.${key}` : key;
+		const inner = innerFilterOf(sub);
+		const quantified = sub.any !== undefined || sub.every !== undefined || sub.none !== undefined || sub.where !== undefined;
+		if (quantified) {
+			out.push({ path, sub });
+			if (inner && typeof inner === "object") listFiltersOf(inner, path, out);
+		} else if (sub.length !== undefined && Object.keys(sub).length === 1) {
+			// `length` ALONE asks about the list's size ("at least one template").
+			// Recorded as a LEAF: it marks the whole list, but only when no
+			// deeper demand on the same branch names specific items.
+			out.push({ path, sub: {}, leaf: true });
+		} else {
+			listFiltersOf(sub, path, out);
+		}
+	}
+	return out;
+};
+
+const valueAt = (obj, path) =>
+	path.split(".").reduce((acc, k) => {
+		if (acc == null) return undefined;
+		// A segment that lands ON a list yields that field in EVERY element —
+		// the same reading `fieldOf` gives a `$ref`, so `css.templates.declarations`
+		// is every declaration of every template, not a property of the array.
+		if (Array.isArray(acc)) return acc.flatMap((entry) => (entry == null ? [] : entry[k] ?? []));
+		return acc[k];
+	}, obj);
+
+const matchedRanges = (c, infer) => {
+	const start = c.lines?.[0] ?? 1;
+	const out = [];
+	const seen = new Set();
+	const push = (from, to, why) => {
+		if (from < 0 || to < from) return;
+		const key = `${from}:${to}:${why}`;
+		if (seen.has(key)) return;
+		seen.add(key);
+		out.push({ from, to, why });
+	};
+	const filters = listFiltersOf(Array.isArray(infer) ? infer : [infer], "", []);
+	// A `length` leaf whose items are SCALARS (a `vars` list of names) is not a
+	// place — drop it before choosing the mark, so the enclosing declaration
+	// demand becomes the deepest on its branch.
+	const placeFilters = filters.filter((f) => {
+		if (!f.leaf) return true;
+		const list = valueAt(c, f.path);
+		return Array.isArray(list) && list.length > 0 && list.every((item) => item != null && typeof item === "object");
+	});
+	// The DEEPEST demand on each branch decides the mark: a role that names
+	// declarations marks those declarations, not the whole template. A `length`
+	// leaf over OBJECTS ("has at least one template") marks the whole list when
+	// nothing deeper names specific items — `styledBlock` has just the leaf, so
+	// it marks the block; `styleSurface` also names declarations, so those win.
+	const deepest = placeFilters.filter((f) => !placeFilters.some((g) => g !== f && g.path.startsWith(`${f.path}.`)));
+	for (const { path, sub } of deepest) {
+		const list = valueAt(c, path);
+		if (!Array.isArray(list)) continue;
+		const hits = hitOf(list, sub, { arch: c.file?.arch });
+		for (const item of hits) {
+			if (item == null || typeof item !== "object") continue;
+			// A declaration: its line is template-relative when it sits in a
+			// template, file-relative when it is a class on an attribute.
+			if (path.endsWith(".declarations")) {
+				const template = (c.css?.templates ?? []).find((t) => (t.declarations ?? []).includes(item));
+				const base = template ? (template.startLine ?? template.line ?? start) - start - 1 : 0;
+				const at = base + (item.line ?? 1);
+				push(at, at, `${item.prop ?? "declaration"}${item.rule ? ` in ${item.rule}` : ""}`);
+			} else if (path.endsWith(".templates")) {
+				const base = (item.startLine ?? item.line ?? start) - start;
+				const lastDecl = item.declarations?.length ? Math.max(...item.declarations.map((d) => d.line ?? 1)) : 0;
+				push(base, base + lastDecl, "css template");
+			} else if (path.endsWith(".classes")) {
+				if (item.line != null) push(item.line - start, item.line - start, `class ${item.raw ?? ""}`);
+			} else if (item.line != null) {
+				push(item.line - start, item.line - start, path);
+			}
+		}
+	}
+	// A function-shaped match (helper, component, …): the piece's own span.
+	if (!out.length && Array.isArray(c.lines) && c.lines.length) {
+		push(0, c.lines[c.lines.length - 1] - start, c.framework?.component ? "renders JSX" : "function-shaped piece");
+	}
+	return out;
+};
+
+// A NAMED piece beats an anonymous one as the face of a role: the first match
+// for `pureFunction` used to be a one-line `${({theme}) => …}` interpolation
+// inside a styled template — formally a helper, but the card showed a window of
+// CSS with no declaration in sight. Anonymous matches are kept (they are real
+// matches) but sorted after the named ones.
+const exampleRank = (c) => (c.name ? 0 : 1);
+
 const collectExamples = ({ arch, files, repoRoot, repoFiles, project }) => {
 	const byRole = new Map();
 	for (const rel of files) {
@@ -53,16 +182,24 @@ const collectExamples = ({ arch, files, repoRoot, repoFiles, project }) => {
 			if (!c.role) continue;
 			if (!byRole.has(c.role)) byRole.set(c.role, []);
 			const list = byRole.get(c.role);
-			if (list.length >= MAX_EXAMPLES_PER_ROLE) {
-				list.overflow = (list.overflow ?? 0) + 1;
-				continue;
-			}
 			list.push({
 				file: rel,
 				line: c.lines?.[0] ?? 1,
 				name: c.name ?? "(anonymous)",
+				rank: exampleRank(c),
 				code: snippet(path.join(repoRoot, rel), c.lines?.[0] ?? 1),
+				matched: matchedRanges(c, arch.codeRoles?.[c.role]?.infer),
 			});
+		}
+	}
+	// Named first, document order within each group; then cap. The overflow
+	// count stays honest: every match beyond the cap is counted, not dropped.
+	for (const [role, list] of byRole) {
+		list.sort((a, b) => a.rank - b.rank);
+		if (list.length > MAX_EXAMPLES_PER_ROLE) {
+			const kept = list.slice(0, MAX_EXAMPLES_PER_ROLE);
+			kept.overflow = list.length - MAX_EXAMPLES_PER_ROLE;
+			byRole.set(role, kept);
 		}
 	}
 	return byRole;

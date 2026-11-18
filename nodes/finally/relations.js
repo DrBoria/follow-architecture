@@ -57,6 +57,15 @@ const checkRelations = (ctx, arch, violations) => {
 			const key = `${kind}:${edge.path}:${edge.line}:${edge.what}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
+			// A LIBRARY is not a place the tree declares: `react`, `@apollo/client`,
+			// `fs` have no node and no role home, so there is no folder-level rule to
+			// judge them by. What a piece may do with a library is the CANDIDATE's
+			// own business — `infer` reads `calls.module` / `imports.source` directly
+			// (that is how `apiRequest` recognises the transport it calls). Skipping
+			// here keeps the closed-world rule about REPO code, where every place is
+			// declared; a library edge judged against an empty home list would report
+			// every `styled.div` and every `useState` as a forbidden relation.
+			if (edge.external) continue;
 			const sourceRoles = edge.role ? [edge.role] : edge.piece ? [] : fileRoles;
 			const selfStatement = edge.path === ctx.rel;
 			if (edge.piece && !edge.role) continue;

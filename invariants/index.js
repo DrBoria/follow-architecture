@@ -14,7 +14,7 @@
 // supplies the line and name for the finding. Nothing declares which fact lives
 // where: the facts answer for themselves.
 
-const { matches, innerFilterOf, hitOf } = require("../entities/queries");
+const { matches, innerFilterOf, hitOf, COMPOSITION_OPS } = require("../entities/queries");
 const { fileVars } = require("./name");
 const { resolveLocation } = require("../entities/location");
 const { entryKey, checkWhere } = require("../entities/location");
@@ -109,6 +109,17 @@ const describePiece = (c) => {
 
 const listFactVars = (vars, target, filter, scope) => {
 	for (const [field, sub] of Object.entries(filter ?? {})) {
+		// A COMPOSITION op is not a fact field. The vocabulary belongs to the
+		// query engine (`COMPOSITION_OPS` — one list, every reader); this module
+		// only looks THROUGH it, descending into the sub-filters against the
+		// SAME target. The operand's SHAPE says which reading: a LIST of filters
+		// names the branches that matched; a single filter names the demand it
+		// wraps (`not:`), so the report can say what the target failed.
+		if (COMPOSITION_OPS.has(field)) {
+			const branches = Array.isArray(sub) ? sub.filter((f) => matches(target, f, scope)) : isObj(sub) ? [sub] : [];
+			for (const f of branches) listFactVars(vars, target, f, scope);
+			continue;
+		}
 		if (!isObj(sub)) continue;
 		const branch = branchOf(sub);
 		const value = fieldOf(target, field);
@@ -121,7 +132,17 @@ const listFactVars = (vars, target, filter, scope) => {
 		}
 		if (!Array.isArray(value)) continue;
 		const list = value;
-		const hit = listHit(list, filter, field, scope);
+		// `where` NARROWS a list before `by` judges it: the items the rule talks
+		// about are the narrowed ones, and the demand they face is `by`. Both the
+		// hit list and the walk into the items use that reading — a rule like "the
+		// `colors` group holds a token outside the catalog" names the offending
+		// TOKENS, not the group it found them in.
+		const narrowing = isObj(sub.where) && isObj(sub.where.filter) ? sub.where : null;
+		const hit = narrowing ? hitOf(list, { where: { filter: narrowing.filter } }, scope) : listHit(list, filter, field, scope);
+		// `by` judges the narrowed LIST, so the walk into the items reads it the
+		// same way the engine does: a leading quantifier (`any`/`every`/`none`)
+		// unwraps to the per-item demand.
+		const walkFilter = narrowing ? branchOf(narrowing.by) : branch;
 		if (hit.length) {
 			const keys = [...new Set(hit.flatMap((item) => Object.entries(item ?? {}).filter(([, v]) => typeof v === "string" && v).map(([k]) => k)))];
 			for (const key of keys) {
@@ -133,23 +154,17 @@ const listFactVars = (vars, target, filter, scope) => {
 				const named = [...new Set(hit.map((x) => x?.name).filter(Boolean))].join(", ");
 				if (named) vars.what = named;
 			}
-			// `{literals}`, `{declarations}`, `{reads}` — the field the rule TESTED,
-			// printed as the words it caught. Which word stands for an item is the
-			// item's own business: its name, else the text it holds, else the property
-			// or selector it is.
+			// `{literals}`, `{declarations}`, `{reads}`, `{classes}` — the field the
+			// rule TESTED, printed as the words it caught. Which word stands for an
+			// item is the item's own business: its name, else the text it holds, else
+			// the raw token it was written as (a class), else the property or selector
+			// it is.
 			if (vars[field] == null) {
-				const spokenItems = [...new Set(hit.map((x) => x?.name ?? x?.text ?? x?.prop ?? x?.selector ?? x?.tag).filter(Boolean))].join(", ");
+				const spokenItems = [...new Set(hit.map((x) => x?.name ?? x?.text ?? x?.raw ?? x?.prop ?? x?.selector ?? x?.tag).filter(Boolean))].join(", ");
 				if (spokenItems) vars[field] = spokenItems;
 			}
 			// …and one level down, into the items themselves.
-			for (const item of hit) listFactVars(vars, item, branch, scope);
-		}
-		// `where` NARROWS a list: name the offending declarations themselves, so
-		// the finding is self-sufficient without opening the file.
-		if (isObj(sub.where) && isObj(sub.where.filter)) {
-			// The same items the engine narrows to — `hitOf` — named for the report.
-			const narrowed = hitOf(list, { where: { filter: sub.where.filter } }, scope);
-			if (narrowed.length) vars[field] = narrowed.map((d) => `${d.name}${d.type ? ` (${d.type})` : ""}`).join(", ");
+			if (isObj(walkFilter)) for (const item of hit) listFactVars(vars, item, walkFilter, scope);
 		}
 	}
 

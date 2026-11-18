@@ -72,13 +72,19 @@ const sourceTextFor = (abs, text) => (SFC_RE.test(abs) ? extractScript(text).tex
 
 const loadSourceFile = (project, abs, text) => project.createSourceFile(abs, sourceTextFor(abs, text), { overwrite: true });
 
-// A map of every imported name (default / named / namespace) to the repo-
-// relative file the import resolves to. Lets a call (`f(...)`) or an
-// initializer (`x = f(...)`) be tied to the module it came from.
+// A map of every imported name (default / named / namespace) to the module it
+// came from. A name that resolves to a scanned repo file maps to that file's
+// repo-relative path; a name that resolves OUTSIDE the scanned set (a package
+// in node_modules, a runtime builtin like `vscode`) maps to the SPECIFIER as
+// written (`@apollo/client`, `react`). The specifier is a fact the architecture
+// can filter on (`calls.module startsWith "@apollo/client"`) without the engine
+// knowing any package by name; whether that module is repo code or a library is
+// the consumer's question (`repoFiles.includes(module)`), never this map's.
 const importNameModules = (sf, repoRoot, aliases, repoFiles) => {
 	const map = new Map();
 	for (const imp of sf.getImportDeclarations()) {
-		const resolved = resolveImport(sf, imp.getModuleSpecifierValue(), repoRoot, aliases, repoFiles);
+		const source = imp.getModuleSpecifierValue();
+		const resolved = resolveImport(sf, source, repoRoot, aliases, repoFiles) ?? source ?? null;
 		const def = imp.getDefaultImport();
 		if (def) map.set(def.getText(), resolved);
 		// Key by the LOCAL binding: for `import { b as c }` that is `c`, not `b`

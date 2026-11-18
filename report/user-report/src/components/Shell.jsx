@@ -80,7 +80,7 @@ export const Shell = ({ data, tab, children }) => {
 	const { meta, stats } = data;
 	const counters = {
 		tree: stats.nodes,
-		graph: stats.edges,
+		graph: stats.roles,
 		invariants: stats.invariants,
 		findings: stats.findings,
 	};

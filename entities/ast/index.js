@@ -76,17 +76,33 @@ const collectCandidateFacts = (node, sf, importMap, rel, repoRoot) => {
 // may sit outside an action. Those are the same questions `location`, `lines`
 // and `kind` already answer for code, so nothing new is invented for it: it is
 // collected as a candidate and the YAML gives it a role like anything else.
+//
+// `export default <expr>` publishes a value with no binding of its own: the
+// export assignment IS the declaration, so it is a candidate too — otherwise a
+// module whose whole content is one published value has no piece a role could
+// describe. `export default name;` publishes an EXISTING piece: the binding it
+// names is already a candidate, and a second one would describe the same code
+// twice.
 const collectCandidates = (sf, importMap, rel, repoRoot) => {
 	const declarations = sf
 		.getDescendants()
-		.filter((n) => isFunctionNode(n) || n.getKind() === SK.VariableDeclaration || isTypeNode(n) || isClassNode(n) || isEnumNode(n))
+		.filter((n) => {
+			if (n.getKind() === SK.ExportAssignment) return n.getExpression()?.getKind() !== SK.Identifier;
+
+			return isFunctionNode(n) || n.getKind() === SK.VariableDeclaration || isTypeNode(n) || isClassNode(n) || isEnumNode(n);
+		})
 		.map((n) => {
 			if (isClassNode(n)) return classFact(n, collectCandidateFacts(n, sf, importMap, rel, repoRoot));
 			if (isEnumNode(n)) return { ...enumFact(n, rel), ...usageOf(n, sf, repoRoot) };
 
 			if (isTypeNode(n)) return { ...typeFact(n, rel), ...usageOf(n, sf, repoRoot) };
 
-			return collectCandidateFacts(n, sf, importMap, rel, repoRoot);
+			const facts = collectCandidateFacts(n, sf, importMap, rel, repoRoot);
+			// An export assignment has no name node; the file's default export is
+			// what a reader (and an import map) calls it.
+			if (n.getKind() === SK.ExportAssignment && !facts.name) facts.name = "default";
+
+			return facts;
 		});
 
 	return [...declarations, ...commentsOf(sf, rel)].sort((a, b) => (a.lines[0] ?? 0) - (b.lines[0] ?? 0));
