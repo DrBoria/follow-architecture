@@ -1,13 +1,15 @@
 {
 	"compilerOptions": {
-		"allowJs": true,
-		"checkJs": false,
+		"allowJs": false,
 		"target": "ES2022",
 		"module": "commonjs",
 		"moduleResolution": "node",
 		"jsx": "preserve",
-		"esModuleInterop": true
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"types": ["node"]
 	},
-	"include": ["**/*.js", "**/*.jsx"],
-	"exclude": ["node_modules", "dist", "reports"]
+	"include": ["**/*.ts"],
+	"exclude": ["node_modules", "dist", "reports", "report/user-report/src", "tests"]
 }

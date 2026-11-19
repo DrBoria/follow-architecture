@@ -1,0 +1,25 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"declaration": false,
+		"types": ["node"]
+	},
+	"include": [
+		"*.ts",
+		"bin/**/*.ts",
+		"code-roles/**/*.ts",
+		"css/**/*.ts",
+		"entities/**/*.ts",
+		"frameworks/**/*.ts",
+		"invariants/**/*.ts",
+		"nodes/**/*.ts",
+		"report/**/*.ts",
+		"report/**/*.tsx",
+		"scripts/**/*.ts",
+		"utils/**/*.ts",
+		"tests/**/*.ts",
+		"vitest.config.ts"
+	],
+	"exclude": ["node_modules", "dist", "reports"]
+}

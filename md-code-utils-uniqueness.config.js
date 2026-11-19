@@ -1,6 +1,6 @@
-// Scan config for utils-uniqueness over this CJS codebase: the type checker
-// must not CHECK the JS (checkJs:false) — it only reads it. Without this the
-// checker crashes on plain CommonJS files ("reading 'flags'").
+// Scan config for utils-uniqueness over this TypeScript codebase. The sources
+// are ordinary `.ts` files now, so the scanner reads THIS package's own
+// `tsconfig.json` — no separate JS-only scan config is needed.
 module.exports = {
-	tsconfig: "tsconfig.scan.json",
+	tsconfig: "tsconfig.json",
 };

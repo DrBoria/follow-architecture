@@ -1,0 +1,41 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "CommonJS",
+		"moduleResolution": "Node",
+		"jsx": "react-jsx",
+		"strict": false,
+		"noImplicitAny": false,
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
+		"resolveJsonModule": true,
+		"declaration": true,
+		"outDir": "dist",
+		"rootDir": ".",
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"types": ["node"],
+		"lib": ["ES2022", "DOM"]
+	},
+	"include": [
+		"*.ts",
+		"bin/**/*.ts",
+		"code-roles/**/*.ts",
+		"css/**/*.ts",
+		"entities/**/*.ts",
+		"frameworks/**/*.ts",
+		"invariants/**/*.ts",
+		"nodes/**/*.ts",
+		"report/**/*.ts",
+		"scripts/**/*.ts",
+		"utils/**/*.ts"
+	],
+	"exclude": [
+		"node_modules",
+		"dist",
+		"tests",
+		"reports",
+		"report/user-report/src",
+		"vitest.config.ts"
+	]
+}

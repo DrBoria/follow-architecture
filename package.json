@@ -12,37 +12,27 @@
     "url": "https://github.com/DrBoria/follow-architecture/issues"
   },
   "homepage": "https://github.com/DrBoria/follow-architecture#readme",
-  "main": "plugin.js",
+  "main": "dist/plugin.js",
+  "types": "dist/plugin.d.ts",
   "engines": {
     "node": ">=18"
   },
   "bin": {
-    "follow-architecture": "bin/follow-architecture.js"
+    "follow-architecture": "dist/bin/follow-architecture.js"
   },
   "files": [
-    "plugin.js",
-    "config.js",
-    "main.js",
-    "aliases.js",
-    "args.js",
-    "ast",
-    "css",
-    "frameworks",
-    "pipeline.js",
-    "invariants",
-    "nodes",
-    "code-roles",
-    "entities",
-    "utils",
-    "report",
-    "bin",
+    "dist/",
+    "report/user-report/src/",
+    "report/user-report/shared/",
+    "report/errorTypes/vocabulary/",
+    "entities/operators.ts",
     "README.md"
   ],
   "exports": {
-    ".": "./plugin.js",
-    "./plugin": "./plugin.js",
-    "./config": "./config.js",
-    "./main": "./main.js",
+    ".": "./dist/plugin.js",
+    "./plugin": "./dist/plugin.js",
+    "./config": "./dist/config.js",
+    "./main": "./dist/main.js",
     "./package.json": "./package.json"
   },
   "dependencies": {
@@ -68,10 +58,23 @@
     "eslint": ">=8.40.0"
   },
   "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "overview": "node bin/follow-architecture.js --overview architecture-overview.html"
+    "overview": "node dist/bin/follow-architecture.js --overview architecture-overview.html",
+    "prepublishOnly": "pnpm build && pnpm test",
+    "lint": "eslint ."
   },
   "devDependencies": {
+    "@md-code/component-uniqueness": "file:../component-uniqueness",
+    "@md-code/entities-uniqueness": "file:../entities-uniqueness",
+    "@md-code/utils-uniqueness": "file:../utils-uniqueness",
+    "@types/node": "^26.6.6",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "typescript": "^5.5",
+    "typescript-eslint": "^8.73.0",
     "vite": "^6.4.5",
     "vitest": "^5.0.3"
   },
