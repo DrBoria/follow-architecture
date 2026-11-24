@@ -12,7 +12,7 @@ import { Badge, Panel, PanelHead, Subtle, Title } from "../ui";
 import { categoryColor } from "../../theme";
 import { nodeLabel } from "../../utils/format";
 import type { ProblemView } from "../../graph/decision";
-import type { EnrichedFinding } from "../../../../../entities/enriched-finding";
+import type { EnrichedFinding, FindingHighlight } from "../../../../../entities/enriched-finding";
 import type { InvariantSummary } from "../../../../../entities/overview-summaries";
 
 const Block = styled.div<{ $bg?: string }>`
@@ -62,6 +62,29 @@ const FixBlock = ({ options }: { options: readonly { text: string }[] }): React.
 	</Block>
 );
 
+// The exact span a finding named inside a value, highlighted: the malformed
+// `calc(…)` or the offending token, not a whole-line tint. The text is the raw
+// value the engine judged; `start`/`end` are its offsets.
+const ValueHighlight = ({ highlight }: { highlight: FindingHighlight }): React.JSX.Element => {
+	const before = highlight.text.slice(0, highlight.start);
+	const hit = highlight.text.slice(highlight.start, highlight.end);
+	const after = highlight.text.slice(highlight.end);
+
+	return (
+		<div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: "#0a0d13", border: "1px solid rgba(255,107,107,0.35)", fontFamily: "ui-monospace, monospace", fontSize: 12.5, color: "#9aa7b8" }}>
+			{before}
+			<mark
+				data-fa-highlight={highlight.kind}
+				title={`CSS grammar: ${highlight.kind}`}
+				style={{ background: "rgba(255,107,107,0.28)", color: "#ffb3b3", borderRadius: 3, padding: "0 2px" }}
+			>
+				{hit}
+			</mark>
+			{after}
+		</div>
+	);
+};
+
 // The statement panel: title, badges, message, before/after, rule, repairs.
 const StatementPanel = ({ current, rule }: { current: EnrichedFinding; rule: InvariantSummary | null }): React.JSX.Element => {
 	const fixOptions = current.fixOptions ?? [];
@@ -76,6 +99,7 @@ const StatementPanel = ({ current, rule }: { current: EnrichedFinding; rule: Inv
 				{current.invariant ? <Badge color="#c8a2ff">{current.invariant}</Badge> : null}
 			</PanelHead>
 			<div style={{ fontSize: 13, color: "#c3ccd9" }}>{current.message}</div>
+			{current.highlight ? <ValueHighlight highlight={current.highlight} /> : null}
 			<div style={{ marginTop: 12 }}>
 				<BeforeAfter plan={current.plan} file={current.file} />
 			</div>

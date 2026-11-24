@@ -18,10 +18,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { loadSourceFile, importNameModules, collectCandidates } from "./index";
+import { enrich as attachFrameworkFacts } from "../../frameworks";
 import { notice } from "../../report/notices";
 import { readOrFallback } from "../../utils/try-read";
 import { reasonOf } from "../../utils/reason";
-import type { Candidate, CallFact } from "../facts";
+import type { Candidate, CallFact, Link } from "../facts";
 import type { ScanContext } from "../context";
 
 // One measured chain: how deep it goes and the names on the way, outermost
@@ -41,23 +42,34 @@ type DepthWalk = ScanContext & { rel: string; cache?: DepthCache };
 // declared locally (a bare call to one of them stays in this file).
 type WalkAt = { rel: string; name: string; local: ReadonlySet<string> };
 
-// Where a call leads next: an imported symbol names its module (followed only
-// when the module is a repo file); a bare call to a local name follows the name
-// in the same file. Anything else is a leaf.
-const nextOf = (call: CallFact, at: WalkAt, ctx: DepthWalk, stack: Set<string>): Chain | null => {
-	if (call.target?.path) {
-		return (ctx.repoFiles ?? []).includes(call.target.path) ? depthOf(call.target.path, call.target.name ?? "", ctx, stack) : null;
-	}
-	if (call.bare && call.action && at.local.has(call.action) && call.action !== at.name) return depthOf(at.rel, call.action, ctx, stack);
+// A link's target: an imported name names its module (followed only when the
+// module is a repo file); a local name is walked in this file. A link back to
+// the piece itself is not a step.
+const follow = (link: Link, at: WalkAt, ctx: DepthWalk, stack: Set<string>): Chain | null => {
+	if (link.module) return (ctx.repoFiles ?? []).includes(link.module) ? depthOf(link.module, link.name, ctx, stack) : null;
+	if (at.local.has(link.name) && link.name !== at.name) return depthOf(at.rel, link.name, ctx, stack);
 
 	return null;
 };
 
-// The longest chain among a piece's calls.
-const deepestCall = (piece: Candidate, at: WalkAt, ctx: DepthWalk, stack: Set<string>): Chain => {
+// Where a CALL leads next: an imported symbol names its module; otherwise the
+// invoked member is followed when it names a piece in this file — a bare call
+// (`f()`) and a member call (`new B().n()`, `this.step()`) are both ways one
+// piece hands work to another.
+const nextOf = (call: CallFact, at: WalkAt, ctx: DepthWalk, stack: Set<string>): Chain | null =>
+	follow({ name: call.target?.path ? (call.target.name ?? "") : (call.action ?? ""), module: call.target?.path ?? null }, at, ctx, stack);
+
+// The longest chain among everything a piece hands work to: the calls it makes
+// and the components it renders. A framework that reads markup supplies its
+// links as facts (`framework.links`); the walk needs no framework of its own.
+const deepestLink = (piece: Candidate, at: WalkAt, ctx: DepthWalk, stack: Set<string>): Chain => {
 	let best: Chain = { depth: 0, chain: [] };
 	for (const call of piece.calls ?? []) {
 		const next = nextOf(call, at, ctx, stack);
+		if (next && next.depth > best.depth) best = next;
+	}
+	for (const link of piece.framework?.links ?? []) {
+		const next = follow(link, at, ctx, stack);
 		if (next && next.depth > best.depth) best = next;
 	}
 
@@ -78,7 +90,7 @@ const depthOf = (rel: string, name: string, ctx: DepthWalk, stack: Set<string>):
 	const local = new Set(candidates.map((c) => c.name).filter((n): n is string => Boolean(n)));
 	let best: Chain = { depth: 0, chain: [] };
 	for (const piece of pieces) {
-		const next = deepestCall(piece, { rel, name, local }, ctx, stack);
+		const next = deepestLink(piece, { rel, name, local }, ctx, stack);
 		if (next.depth > best.depth) best = next;
 	}
 	stack.delete(key);
@@ -97,10 +109,16 @@ const candidatesIn = (rel: string, ctx: DepthWalk): Candidate[] => {
 	if (cached) return cached;
 	const read = (): Candidate[] => {
 		const abs = path.join(ctx.repoRoot, rel);
-		const sf = loadSourceFile(ctx.project, abs, fs.readFileSync(abs, "utf8"));
+		const text = fs.readFileSync(abs, "utf8");
+		const sf = loadSourceFile(ctx.project, abs, text);
 		const importMap = importNameModules(sf, ctx.repoRoot, ctx.aliases ?? {}, ctx.repoFiles);
+		const candidates = collectCandidates(sf, importMap, rel, ctx.repoRoot);
+		// The facets read the same file the walk does, so a rendered component is a
+		// link here exactly as it is in the invariants. The import map is handed over
+		// so a tag imported from another module names that module.
+		attachFrameworkFacts(candidates, { rel, sf, text, repoRoot: ctx.repoRoot, importMap });
 
-		return collectCandidates(sf, importMap, rel, ctx.repoRoot);
+		return candidates;
 	};
 	const out = readOrFallback(rel, read, [], (e) => notice(`the import chain of ${rel} could not be read`, reasonOf(e)));
 	ctx.cache?.files.set(rel, out);

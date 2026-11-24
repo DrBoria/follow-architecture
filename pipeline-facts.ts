@@ -11,7 +11,7 @@ import type { Project, SourceFile } from "ts-morph";
 import { toRel } from "./utils/imports";
 import { loadSourceFile, collectCandidates, collectFileFacts, importNameModules } from "./entities/ast";
 import { attachToCandidates as attachCssFacts } from "./css";
-import { classifyValue } from "./css/values";
+import { classifyValue } from "./css/core/values";
 import { enrich as attachFrameworkFacts } from "./frameworks";
 import { attachCallDepth } from "./entities/ast/depth";
 import type { Arch } from "./entities/architecture";
@@ -65,8 +65,8 @@ const classifyMembers = (members: readonly CssMember[] | undefined): void => {
 // of the same AST (attached before classification, so a code role can be
 // defined on them exactly like on `kind` — both are optional namespaces, a
 // plain `.ts` file gets neither), and the CSS grammar reading of string members.
-const withFacets = (candidates: Candidate[], run: { ctx: FileContext; sf: SourceFile; text: string; project: Project; arch: Arch; repoFiles: string[] }): Candidate[] => {
-	const { ctx, sf, text, project, arch, repoFiles } = run;
+const withFacets = (candidates: Candidate[], run: { ctx: FileContext; sf: SourceFile; text: string; project: Project; arch: Arch; repoFiles: string[]; importMap: ReadonlyMap<string, string> }): Candidate[] => {
+	const { ctx, sf, text, project, arch, repoFiles, importMap } = run;
 	attachCallDepth(candidates, {
 		rel: ctx.rel,
 		project,
@@ -75,7 +75,7 @@ const withFacets = (candidates: Candidate[], run: { ctx: FileContext; sf: Source
 		repoFiles,
 		cache: (arch.depthCache ??= { memo: new Map(), files: new Map() }),
 	});
-	attachFrameworkFacts(candidates, { rel: ctx.rel, sf, text, repoRoot: arch.repoRoot ?? ctx.repoRoot });
+	attachFrameworkFacts(candidates, { rel: ctx.rel, sf, text, repoRoot: arch.repoRoot ?? ctx.repoRoot, importMap });
 	attachCssFacts(candidates, { sf });
 	for (const candidate of candidates) classifyMembers(candidate.kind?.initializer?.members);
 
@@ -97,7 +97,7 @@ const collectFacts = (...args: [abs: string, arch: Arch, project: Project, repoF
 	// `repoRoot` lets the type-resolved facts (`assignments[].type`,
 	// `parameters[].typeFile`) be repo-relative, which is what
 	// `location: { node: … }` matches against.
-	const candidates = withFacets(collectCandidates(sf, importMap, ctx.rel, ctx.repoRoot ?? "."), { ctx, sf, text, project, arch, repoFiles });
+	const candidates = withFacets(collectCandidates(sf, importMap, ctx.rel, ctx.repoRoot ?? "."), { ctx, sf, text, project, arch, repoFiles, importMap });
 	const fileFacts = collectFileFacts(sf, { rel: ctx.rel, repoFiles, aliases: ctx.aliases, repoRoot: ctx.repoRoot ?? ".", candidates: [] });
 	for (const c of candidates) c.file = fileFacts;
 

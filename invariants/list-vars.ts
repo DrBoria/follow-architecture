@@ -46,6 +46,49 @@ const itemWord = (item: FieldValue): FieldValue => {
 	return item.name ?? item.text ?? item.raw ?? item.prop ?? item.selector ?? item.tag;
 };
 
+// The numeric `{ start, end }` a value names, or null when it is not one. One
+// guard, so the span readers below stay flat.
+const numericSpan = (value: FieldValue): { start: number; end: number } | null => {
+	if (!isObj(value)) return null;
+	const { start, end } = value;
+
+	return typeof start === "number" && typeof end === "number" ? { start, end } : null;
+};
+
+const kindOf = (item: FieldValue): string => (isObj(item) && typeof item.kind === "string" ? item.kind : "");
+
+// A SPAN a matched fact names, so the report can highlight exactly the offending
+// text. A fact may carry `span` on itself, or on the first problem it lists
+// (`problems[].span`) — e.g. a resolved value whose problem marks the `calc(…)`.
+const spanOfItem = (item: FieldValue): { start: number; end: number; kind: string } | null => {
+	if (!isObj(item)) return null;
+	const direct = numericSpan(item.span);
+	if (direct) return { ...direct, kind: kindOf(item) };
+	for (const problem of isList(item.problems) ? item.problems : []) {
+		const span = numericSpan(isObj(problem) ? problem.span : undefined);
+		if (span) return { ...span, kind: kindOf(problem) || kindOf(item) };
+	}
+
+	return null;
+};
+
+// The highlight vars for the first hit fact that names both a span and the text
+// it applies to. Generic: any fact shaped `{ value|text, span }` earns it.
+const spanVars = (vars: ReportVars, hit: readonly FieldValue[]): void => {
+	for (const item of hit) {
+		const span = spanOfItem(item);
+		if (!span || !isObj(item)) continue;
+		const text = item.value ?? item.text ?? item.raw;
+		if (typeof text !== "string" || !text) continue;
+		vars.highlightText = text;
+		vars.spanStart = span.start;
+		vars.spanEnd = span.end;
+		if (span.kind) vars.highlightKind = span.kind;
+
+		return;
+	}
+};
+
 // Every string field the matched items carry becomes a placeholder; `{what}`
 // names the thing the rule caught; the tested field prints as the words it
 // caught. Then one level down, into the items themselves.
@@ -63,6 +106,7 @@ const hitVars = (vars: ReportVars, hit: readonly FieldValue[], walk: { field: st
 		const spokenItems = spokenOf(hit, itemWord);
 		if (spokenItems) vars[walk.field] = spokenItems;
 	}
+	spanVars(vars, hit);
 	if (isObj(walk.walkFilter)) for (const item of hit) listFactVars(vars, item, walk.walkFilter, walk.scope);
 };
 

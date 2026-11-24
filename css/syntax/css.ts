@@ -5,7 +5,7 @@
 
 import * as postcss from "postcss";
 import type { Root } from "postcss";
-import { documentFacts, type DocumentFacts, type DocumentOptions } from "../document";
+import { documentFacts, type DocumentFacts, type DocumentOptions } from "../styled/document";
 
 const id = "css";
 const exts = [".css"];

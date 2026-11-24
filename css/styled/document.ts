@@ -19,10 +19,12 @@
 import * as postcss from "postcss";
 import type { Root, Rule, Declaration, Comment, Node } from "postcss";
 import selectorParser from "postcss-selector-parser";
-import { classifyValue, type ValueParts } from "./values";
-import { notice } from "../report/notices";
-import { reasonOf } from "../utils/reason";
-import { readOrFallback } from "../utils/try-read";
+import { classifyValue, type ValueParts } from "../core/values";
+import { piecesOfRange, type Piece } from "../core/pieces";
+import type { ValueResolution } from "../resolve/resolve";
+import { notice } from "../../report/notices";
+import { reasonOf } from "../../utils/reason";
+import { readOrFallback } from "../../utils/try-read";
 import type { TemplateExpr, CommentFact } from "./facts";
 
 // A parser handed in by a syntax provider; the default reads plain CSS.
@@ -125,7 +127,10 @@ const ruleFact = (rule: Rule): RuleFact => ({
 });
 
 // One declaration, as a fact: the value reader's whole answer, spread whole, plus
-// what only this reader knows — the rule it belongs to and what the value QUOTES.
+// what only this reader knows — the rule it belongs to, what the value QUOTES,
+// where the value sits in the text (so a resolver can walk back to its
+// expressions) and the media query it is scoped to (so a variable with media
+// variants keeps them apart). `resolution` is filled by the value resolver.
 type DeclarationFact = Ordered &
 	ValueParts & {
 		prop: string;
@@ -136,6 +141,11 @@ type DeclarationFact = Ordered &
 		comment: CommentFact | null;
 		reads: TemplateExpr[];
 		parsed: boolean;
+		valueFrom: number;
+		valueTo: number;
+		media: string | null;
+		pieces: Piece[];
+		resolution?: ValueResolution;
 	};
 
 // The rule a declaration belongs to, or null when it sits at the document root.
@@ -150,22 +160,79 @@ const spanOf = (decl: Declaration): { from: number; to: number } => {
 	return { from, to };
 };
 
-const declarationFact = (decl: Declaration, exprs: readonly TemplateExpr[]): DeclarationFact => {
+// Where the VALUE starts in the source text: the declaration starts at the
+// property, so the `raws.between` postcss kept (`: `, `:\n  `) is the distance
+// from the property's end to the value's first character. Any other reading
+// (`indexOf(":")`) would mistake a `:` inside a value for the separator.
+const valueFromOf = (decl: Declaration, exprs: readonly TemplateExpr[]): number => {
+	const start = decl.source?.start?.offset ?? 0;
+	const between = decl.raws?.between ?? ":";
+	const afterProp = start + decl.prop.length + between.length;
+	// A value that STARTS with an expression keeps its leading blanks in
+	// `raws.between` (they look like whitespace to postcss), so the expression
+	// would fall outside the value range and be silently dropped. The recorded
+	// expression offset is the true start then.
+	const firstExpression = exprs
+		.filter((expr) => expr.offset >= start + decl.prop.length && expr.offset < (decl.source?.end?.offset ?? expr.offset + 1))
+		.sort((a, b) => a.offset - b.offset)[0];
+
+	return firstExpression && firstExpression.offset < afterProp ? firstExpression.offset : afterProp;
+};
+
+const endOffsetOf = (decl: Declaration): number => decl.source?.end?.offset ?? decl.source?.start?.offset ?? 0;
+const semicolonLength = (decl: Declaration, text: string): number => (text[endOffsetOf(decl) - 1] === ";" ? 1 : 0);
+const importantLength = (decl: Declaration): number => (decl.important ? (decl.raws?.important ?? "!important").length : 0);
+
+// Where the value ENDS: postcss's declaration end includes the `;` and (when
+// present) `!important`, neither of which is part of the value. Only those two
+// are trimmed — the blank placeholders an expression left are part of the value.
+const valueToOf = (decl: Declaration, text: string): number => endOffsetOf(decl) - semicolonLength(decl, text) - importantLength(decl);
+
+// The media query a declaration is scoped to, as a fact: the nearest enclosing
+// `@media` block, its params verbatim. A variable declared once inside a media
+// query is a VARIANT of the same variable, so the query is what keeps the two
+// apart — the reader does not decide which one wins.
+const MEDIA_AT_RULES = new Set(["media"]);
+
+const mediaOf = (decl: Declaration): string | null => {
+	let parent: Node | undefined = decl.parent;
+	while (parent) {
+		// A declaration's parent chain is postcss's own nodes; the structural
+		// properties of an at-rule are checked with `in`, so no cast is needed.
+		if (parent.type === "atrule" && "params" in parent && "name" in parent) {
+			const name = String(parent.name);
+			if (MEDIA_AT_RULES.has(name)) return `@${name} ${String(parent.params).trim()}`;
+		}
+		parent = parent.parent;
+	}
+
+	return null;
+};
+
+const declarationFact = (decl: Declaration, exprs: readonly TemplateExpr[], text: string): DeclarationFact => {
 	const value = String(decl.value);
-	const line = decl.source?.start?.line ?? null;
-	const classification = classifyValue(value, line);
+	const classification = classifyValue(value, decl.source?.start?.line ?? null);
 	const { from, to } = spanOf(decl);
+	const valueFrom = valueFromOf(decl, exprs);
+	const valueTo = valueToOf(decl, text);
 
 	return {
 		key: decl.prop,
 		prop: decl.prop,
 		value,
-		line,
+		line: decl.source?.start?.line ?? null,
 		important: Boolean(decl.important),
 		rule: ruleOf(decl),
 		comment: commentAbove(decl),
 		...classification,
 		reads: readsIn(exprs, from, to),
+		valueFrom,
+		valueTo,
+		media: mediaOf(decl),
+		// The value as PIECES, read from the document text — not from
+		// `decl.value`, which postcss trims: a value that is only an expression
+		// (`box-shadow: ${x};`) would arrive empty and lose its question.
+		pieces: piecesOfRange(text, exprs, { from: valueFrom, to: valueTo, base: 0 }),
 	};
 };
 
@@ -211,7 +278,7 @@ const documentFacts = (text: string, { exprs = [], parse, syntax = "css" }: Docu
 	const literals: (ValueParts["literals"][number] & { prop: string })[] = [];
 	const vars: string[] = [];
 	root.walkDecls((decl) => {
-		const fact = declarationFact(decl, quoted);
+		const fact = declarationFact(decl, quoted, text);
 		declarations.push(fact);
 		literals.push(...fact.literals.map((literal) => ({ ...literal, prop: decl.prop })));
 		vars.push(...fact.vars);

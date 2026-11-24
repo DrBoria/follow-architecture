@@ -8,7 +8,7 @@
 // declaration, not a CSS property.
 
 import type { Root } from "postcss";
-import { cssTree } from "../css-tree";
+import { cssTree } from "../core/css-tree";
 import { admitsWhenNoneReject } from "../../utils/gate";
 import { readOrFallback } from "../../utils/try-read";
 import { readWhen } from "../../utils/read-when";

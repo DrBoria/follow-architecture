@@ -2,8 +2,8 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-import { classFacts, utilityFacts, engine } from "../../css/tailwind";
-import { attachClasses } from "../../css/markup";
+import { classFacts, utilityFacts, engine } from "../../css/tailwind/tailwind";
+import { attachClasses } from "../../css/styled/markup";
 import { createTsProject, loadSourceFile, collectCandidates, importNameModules } from "../../entities/ast";
 
 // Tailwind is CSS in an attribute: the same facts must come out of a React

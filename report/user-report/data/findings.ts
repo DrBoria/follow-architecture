@@ -6,7 +6,7 @@
 
 import { deepestMatch } from "../../../entities/tree";
 import { describe } from "../../errorTypes";
-import { fieldOf, type FieldValue } from "../../../utils/field";
+import { fieldOf, isObj, type FieldValue } from "../../../utils/field";
 import { stringField, recordListField, numberField } from "../../../utils/read-field";
 import { titleFor, categoryOf } from "./finding-title";
 import { buildPlan } from "./finding-plan";
@@ -14,7 +14,7 @@ import { boundaryDetail } from "./finding-boundary";
 import type { Arch, ArchNode } from "../../../entities/architecture";
 import type { Finding } from "../../../entities/findings";
 import type { NodeSummary } from "../../../entities/overview-summaries";
-import type { EnrichedFinding, Plan, FindingViolation } from "../../../entities/enriched-finding";
+import type { EnrichedFinding, Plan, FindingViolation, FindingHighlight } from "../../../entities/enriched-finding";
 import type { Story } from "../../../entities/story";
 import type { Repair } from "../../../entities/repair";
 
@@ -159,6 +159,7 @@ const enrichOne = (args: { f: Finding; arch: Arch; nodes: readonly NodeSummary[]
 		boundary: boundaryTarget ? boundaryDetail({ ownerNode, targetNode: boundaryTarget, roles: actors }) : null,
 		plan,
 		story,
+		highlight: highlightOf(f),
 	};
 };
 
@@ -167,6 +168,20 @@ const ownerFields = (ownerNode: ArchNode | null): { ownerNode: string | null; no
 	nodeRoles: ownerNode?.roles ?? [],
 	ownerPaths: ownerNode ? [ownerNode.path] : [],
 });
+
+// The span the finding named inside a value — the exact text the browser
+// highlights. Null when the finding named no span.
+// eslint-disable-next-line md-code-utils/utils-uniqueness -- reads a highlight bag, not a type assertion
+const highlightOf = (f: Finding): FindingHighlight | null => {
+	const highlight = fieldOf(f, "highlight");
+	if (!isObj(highlight)) return null;
+	const text = stringField(highlight, "text");
+	const start = numberField(highlight, "start", -1);
+	const end = numberField(highlight, "end", -1);
+	if (!text || start < 0 || end < start) return null;
+
+	return { text, start, end, kind: stringField(highlight, "kind", "problem") };
+};
 
 const enrichFindings = (args: { findings: readonly Finding[]; arch: Arch; nodes: readonly NodeSummary[] }): EnrichedFinding[] => {
 	const { findings, arch, nodes } = args;

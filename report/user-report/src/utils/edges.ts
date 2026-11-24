@@ -12,10 +12,12 @@ const kindsOfEdge = (edge: AccessEdge): string[] => edge.kinds ?? [edge.kind];
 // The distinct action kinds across a set of edges, in first-seen order.
 export const edgeKinds = (edges: readonly AccessEdge[]): string[] => distinctFlat(edges, kindsOfEdge);
 
-// How many edges each kind appears on.
+// How many edges each kind appears on. `countBy` answers {key,count} rows, so
+// they are turned into [key,count] pairs before the Map reads them — feeding
+// the rows straight in would key every entry by `undefined` and read 0.
 export const edgeKindCounts = (edges: readonly AccessEdge[]): Map<string, number> => {
 	const pairs = edges.flatMap((e) => kindsOfEdge(e).map((k) => ({ k })));
-	return new Map(countBy(pairs, (p) => p.k));
+	return new Map(countBy(pairs, (p) => p.k).map((c) => [c.key, c.count] as [string, number]));
 };
 
 // The edges limited to one kind; `"all"` keeps every edge.

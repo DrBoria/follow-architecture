@@ -140,11 +140,23 @@ const edgesOf = (facts: Facts): Edge[] => Object.values(EDGE_FACTS).flatMap((pro
 // question.
 const piecesWithEdges = (edges: readonly Edge[]): Set<string> => new Set(edges.map((e) => e.piece).filter((p): p is string => Boolean(p)));
 
+// A piece whose VALUE is judged by the css-fact invariants, not by a role: a
+// styled/createGlobalStyle/css fragment (a tagged template), or a DATA literal
+// (a token group, a breakpoint table, a rhythm origin). These are values, not
+// behaviour — the settled model leaves them unroled on purpose and checks their
+// contents instead (`proper-values`, `proper-naming`, `proper-documentation`).
+const VALUE_INITIALIZERS = new Set(["TaggedTemplateExpression", "ObjectLiteralExpression", "SatisfiesExpression", "AsExpression", "ArrayLiteralExpression", "NoSubstitutionTemplateLiteral"]);
+const governedByValues = (c: Candidate): boolean => VALUE_INITIALIZERS.has(c.kind?.initializer?.is ?? "");
+
 // Is this candidate an unroled PIECE that touches something? One piece may be
 // described by two candidates — a `const` holding an arrow is the same code
-// seen twice; when one of them got a role, the piece is described.
+// seen twice; when one of them got a role, the piece is described. A piece
+// carrying css TEMPLATES, or whose whole value is DATA, is governed by the
+// css-fact invariants, not by a role.
+const isRoled = (c: Candidate, roledLines: ReadonlySet<number>): boolean => Boolean(c.role) || roledLines.has(c.lines?.[0] ?? 1);
+const governedByValuesOrCss = (c: Candidate): boolean => Boolean(c.css?.templates?.length) || governedByValues(c);
 const unroledPiece = (c: Candidate, roledLines: ReadonlySet<number>, touching: ReadonlySet<string>): boolean =>
-	!c.role && !roledLines.has(c.lines?.[0] ?? 1) && isPiece(c) && Boolean(c.name) && touching.has(c.name ?? "");
+	!isRoled(c, roledLines) && isPiece(c) && Boolean(c.name) && touching.has(c.name ?? "") && !governedByValuesOrCss(c);
 
 // One unroled piece's finding, once per piece.
 const unroledFindings = (withRoles: readonly Candidate[], scene: { ctx: FileContext; decl: Declaration; like: Lookalike[]; edges: Edge[] }, out: Finding[]): number => {
@@ -163,10 +175,23 @@ const unroledFindings = (withRoles: readonly Candidate[], scene: { ctx: FileCont
 
 // A file NOTHING describes: no role present and no piece to say it about (a
 // file of re-exports, a file of imports). Said once, for the file — and only
-// when the file actually does something: a file with no declarations and no
-// relation to another module holds no code for a role to describe.
+// when the file actually does something. A BARREL (every export re-exports
+// another module) holds no code of its own, so it is not a thing to role: its
+// re-exports are governed by `no-re-exports`'s place list, not by a role.
+const reexportOnly = (scene: { ctx: FileContext }): boolean => {
+	const exports = scene.ctx.facts?.exports ?? [];
+
+	return exports.length > 0 && exports.every((entry) => Boolean(entry.from));
+};
+
+// A file whose every piece is DATA or a style fragment holds no behaviour to
+// role: its values are judged by the css-fact invariants.
+const isValuePiece = (c: Candidate): boolean => governedByValues(c) || Boolean(c.role) || Boolean(c.css?.templates?.length);
+const onlyValuePieces = (candidates: readonly Candidate[]): boolean => candidates.length > 0 && candidates.every(isValuePiece);
+
 const fileFinding = (scene: { ctx: FileContext; decl: Declaration; like: Lookalike[]; edges: Edge[] }, out: Finding[]): void => {
 	if (!scene.edges.some((e) => e.path !== scene.ctx.rel)) return;
+	if (reexportOnly(scene) || onlyValuePieces(scene.ctx.facts?.candidates ?? [])) return;
 	out.push(findingFrom({ ...noRole(scene.ctx.rel, null, scene) }, "nodes", scene.decl.owner ?? scene.ctx.rel, `unroled:${scene.decl.owner ?? "tree"}:file`, { path: scene.ctx.rel, what: scene.ctx.rel }));
 };
 

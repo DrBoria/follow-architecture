@@ -11,6 +11,7 @@ import type { Arch } from "./architecture";
 import type { FileFacts } from "./facts";
 import type { Facts } from "./kinds";
 import type { ResolveContext } from "../utils/imports";
+import type { ProviderLiteral } from "../css/core/scope-types";
 
 // The file's facts plus the repo file list — the invariants' filter target.
 type RunFacts = Facts;
@@ -33,6 +34,9 @@ type FileContext = {
 	// Shared across the run: lets node-level checks report once per folder
 	// instead of once per file inside it.
 	dedupe?: Map<string, Set<string>>;
+	// The provider literals a set of code-role slugs offers ACROSS the project —
+	// the lazy resolution's source (only filled when a run has a project).
+	providersFor?: (slugs: readonly string[]) => ProviderLiteral[];
 };
 
 // What a per-file scan needs from the run: the resolver's own view of the repo

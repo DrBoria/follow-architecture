@@ -11,7 +11,7 @@
 
 import * as postcssScss from "postcss-scss";
 import type { Root, Declaration, AtRule } from "postcss";
-import { documentFacts, type DocumentFacts, type DocumentOptions } from "../document";
+import { documentFacts, type DocumentFacts, type DocumentOptions } from "../styled/document";
 import type { Located } from "../../entities/facts";
 
 const id = "scss";

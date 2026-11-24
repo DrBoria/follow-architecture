@@ -9,6 +9,7 @@ import type { RelationToken } from "./token";
 import type { Repair } from "./repair";
 import type { Story } from "./story";
 import type { Place } from "./place";
+import type { FindingHighlight } from "./findings";
 import type { Violation } from "../nodes/finally/violation";
 
 // The before/after plan: where the code is, where it belongs, and the relation
@@ -67,6 +68,7 @@ type EnrichedFinding = {
 	boundary: Boundary | null;
 	plan: Plan;
 	story: Story;
+	highlight: FindingHighlight | null;
 };
 
-export type { PlanPlace, PlanRelation, Plan, Boundary, FindingViolation, EnrichedFinding };
+export type { PlanPlace, PlanRelation, Plan, Boundary, FindingViolation, FindingHighlight, EnrichedFinding };

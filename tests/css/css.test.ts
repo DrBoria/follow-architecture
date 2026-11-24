@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 import { createTsProject, loadSourceFile } from "../../entities/ast";
 import * as css from "../../css";
-import { classifyValue } from "../../css/values";
-import { classFacts } from "../../css/tailwind";
+import { classifyValue } from "../../css/core/values";
+import { classFacts } from "../../css/tailwind/tailwind";
 import { SyntaxKind } from "ts-morph";
 
 // CSS is a FACT source, not a rule. These tests pin what is READ — declarations,

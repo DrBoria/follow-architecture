@@ -193,6 +193,28 @@ describe("collectOverviewData", () => {
 		const other = src.children.find((c) => c.name === "other.ts");
 		expect(other.nodeSlug).toBeTruthy();
 	});
+
+	it("carries a finding's value span into the payload and the rendered markup", () => {
+		const data = collect([
+			{
+				file: "src/other.ts",
+				rule: "invariant",
+				key: "infer",
+				dedupeKey: "invariant:proper-values:infer",
+				message: "bad calc",
+				fix: null,
+				pos: { line: 1, column: 1 },
+				highlight: { text: "calc(2+)", start: 0, end: 8, kind: "math" },
+			},
+		]);
+		// The structured span survives enrichment: this is what the browser draws.
+		expect(data.findings[0].highlight).toEqual({ text: "calc(2+)", start: 0, end: 8, kind: "math" });
+		const html = renderOverview(data);
+		// The span travels in the JSON payload the SPA reads...
+		expect(html).toContain('"highlight":{"text":"calc(2+)","start":0,"end":8,"kind":"math"}');
+		// ...and the bundle carries the <mark> that renders it around the span.
+		expect(html).toContain("data-fa-highlight");
+	});
 });
 
 describe("describeCondition", () => {

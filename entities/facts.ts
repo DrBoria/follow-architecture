@@ -10,7 +10,7 @@
 // and an absent one the same way, so the shapes stay data-first.
 
 import type { FieldValue } from "../utils/field";
-import type { ClassFact } from "../css/tailwind";
+import type { ClassFact } from "../css/tailwind/tailwind";
 
 // What every facet of "what is this node" answers: `{ is, name, line }`.
 // The `name`/`line` pair is shared by every located facet.
@@ -181,14 +181,29 @@ type JsxElementFact = {
 	spreads: string[];
 };
 
+// One way a piece hands work to another: the target's name and, when it is
+// imported, the module it is declared in (`null` means the same file). A
+// rendered component and a called function are the SAME link shape — the depth
+// walk follows either — so the type lives here once and `ast/depth` reuses it.
+type Link = { name: string; module: string | null };
+
+// The render-link alias kept for readers of the framework facts: the depth
+// walk's link, supplied by the facet that knows the framework.
+type RenderLink = Link;
+
 // The `framework` namespace: what a component renders and hands down. Every
-// framework attaches the same base; a framework that reads markup adds `jsx`.
+// framework attaches the same base; a framework that reads markup adds `jsx`
+// and the `links` the depth walk follows.
 type FrameworkFacts = {
 	id: string;
 	component: boolean;
 	props: string[];
 	forwarded: string[];
 	jsx?: JsxElementFact[];
+	links?: RenderLink[];
+	// This piece is referenced by an event attribute (`onClick={close}`) — the
+	// framework's convention, not a name list. A role infers from it like any fact.
+	handler?: boolean;
 };
 
 // THE candidate: a piece of code a role classifies. Every field a producer may
@@ -242,8 +257,9 @@ type ImportFact = {
 };
 
 // One way code leaves the module — an import's shared fields plus what only an
-// export names.
-type ExportFact = Pick<ImportFact, "form" | "source" | "line" | "piece" | "named"> & { from?: string | null; name?: string | null };
+// export names. `typeOnly` separates `export type … from` (erased at compile
+// time, binds nothing at runtime) from a value re-export of the same shape.
+type ExportFact = Pick<ImportFact, "form" | "source" | "line" | "piece" | "named" | "typeOnly"> & { from?: string | null; name?: string | null };
 
 // One member of another module this file reads.
 type ReadFact = { module: string; what: string; line: number; piece: string | null };
@@ -284,6 +300,8 @@ export type {
 	CssClassFact,
 	CssFacts,
 	JsxElementFact,
+	Link,
+	RenderLink,
 	FrameworkFacts,
 	Candidate,
 	Leaf,

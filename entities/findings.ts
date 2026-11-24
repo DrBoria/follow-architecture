@@ -30,4 +30,9 @@ type FindingItem = {
 // while the parameter-count rule governs ONE parameter.
 type FindingFrom = (...args: [item: FindingItem, rule: string, node: string, key: string, vars: Record<string, FieldValue>]) => Finding;
 
-export type { Finding, FindingItem, FindingFrom };
+// The span a finding names inside a value — the exact text the browser
+// highlights (a malformed math call, an offending token). `kind` says why.
+// eslint-disable-next-line md-code-entities/entities-uniqueness -- adds text+kind to a bare range; not the same entity
+type FindingHighlight = { text: string; start: number; end: number; kind: string };
+
+export type { Finding, FindingItem, FindingFrom, FindingHighlight };

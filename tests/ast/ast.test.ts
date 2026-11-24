@@ -242,6 +242,20 @@ describe("ast — module scope variables (candidates with piece: null)", () => {
 		expect(byName.set.kind.initializer.origin).toBe("new Set");
 		expect(byName.obj.kind.initializer.is).toBe("ObjectLiteralExpression");
 	});
+
+	it("a tagged template's origin is its tag (`keyframes`, `styled.div`, `styled`)", () => {
+		// The tag is what makes the value: an animation (`keyframes`) is not a style
+		// block (`styled.div`, `styled(Image)`) and neither is a helper fragment
+		// (`css`). The origin is read through the same walk as a call chain.
+		const { facts } = factsFor("const move = keyframes`\n from { x: 0 }\n`;\nconst Paper = styled.div`\n color: red;\n`;\nconst Card = styled(Image)`\n color: red;\n`;\n");
+		const byName = Object.fromEntries(
+			facts.candidates.filter((c) => c.location.piece === null && c.kind.own.is === "VariableDeclaration").map((v) => [v.name, v]),
+		);
+		expect(byName.move.kind.initializer.is).toBe("TaggedTemplateExpression");
+		expect(byName.move.kind.initializer.origin).toBe("keyframes");
+		expect(byName.Paper.kind.initializer.origin).toBe("styled.div");
+		expect(byName.Card.kind.initializer.origin).toBe("styled");
+	});
 });
 
 // Facts that depend on the folder's sibling files: pass the whole folder.
@@ -292,6 +306,29 @@ describe("ast — exports fact", () => {
 		expect(ns.named).toEqual(["ns"]);
 		expect(ns.from).toBe("a/ns.ts");
 		expect(facts.exports.find((e) => e.form === "star")).toBeDefined();
+	});
+
+	it("marks type-only re-exports: `export type …` is true, the value spellings false", () => {
+		// The rule "re-exports are forbidden" must exempt type-only re-exports:
+		// they erase at compile time and hide no owner, so the fact has to say so.
+		const { facts } = factsFor(
+			"export type { T } from './y';\nexport type * from './y';\nexport { v } from './y';\nexport * from './y';\nexport { local };\n",
+			"a/x.ts",
+			["a/x.ts", "a/y.ts"],
+		);
+		const typeNamed = facts.exports.find((e) => e.form === "named" && e.typeOnly);
+		expect(typeNamed?.typeOnly).toBe(true);
+		expect(typeNamed?.named).toEqual(["T"]);
+		const typeStar = facts.exports.find((e) => e.form === "star" && e.typeOnly);
+		expect(typeStar?.typeOnly).toBe(true);
+		// A value named re-export and a value star re-export are NOT type-only.
+		const valueNamed = facts.exports.find((e) => e.form === "named" && e.named?.[0] === "v");
+		expect(valueNamed?.typeOnly).toBe(false);
+		const valueStar = facts.exports.find((e) => e.form === "star" && e.typeOnly === false);
+		expect(valueStar).toBeDefined();
+		// A local export with no `from` is a plain value export, never type-only.
+		const local = facts.exports.find((e) => e.form === "named" && e.named?.[0] === "local");
+		expect(local?.typeOnly).toBe(false);
 	});
 });
 

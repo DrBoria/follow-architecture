@@ -7,7 +7,7 @@
 // has the element's own aspect ratio, which is what makes "zoom where the
 // cursor is" exact.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Box } from "../../utils/layout";
 
 // Zoom limits: 1 = the whole graph fits, 12 = one folder name is readable.
@@ -115,7 +115,11 @@ const useZoomPan = (ask: { fullW: number; fullH: number; relayoutKey: string }):
 		return () => observer.disconnect();
 	}, [svgEl]);
 
-	const fit = fitOf(box, fullW, fullH);
+	// MEMOISED: `centred` depends on `fit`, and the "new drawing starts at fit"
+	// effect depends on `centred`. A fresh `fit` object every render would make
+	// that effect run on every render and reset the zoom immediately after each
+	// interaction — the +/- buttons and the wheel would look dead.
+	const fit = useMemo(() => fitOf(box, fullW, fullH), [box, fullW, fullH]);
 	const clampPan = useCallback((view: View, viewW: number, viewH: number): View => clampOf({ view, viewW, viewH, fullW, fullH }), [fullW, fullH]);
 	const centred = useCallback((s: number): View => clampPan({ s, x: (fullW - fit.w / s) / 2, y: (fullH - fit.h / s) / 2 }, fit.w / s, fit.h / s), [clampPan, fit, fullW, fullH]);
 

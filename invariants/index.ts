@@ -15,6 +15,7 @@
 // where: the facts answer for themselves.
 
 import { matches, innerFilterOf, isObj } from "../entities/queries";
+import { materialiseResolution } from "../css";
 import { fileVars } from "./name";
 import { resolveLocation, entryKey, checkWhere } from "../entities/location";
 import { fieldOf, isList, isRecordValue, type FieldValue } from "../utils/field";
@@ -218,6 +219,60 @@ const checkInfer = (inv: Invariant, ctx: FileContext, sink: Sink): void => {
 	for (const entry of inv.infer) checkEntry(entry, inv, ctx, { spoken, sink });
 };
 
+// Does this filter read a declaration's `resolution` fact? Then the lazy
+// resolution must be materialised before the filter is asked.
+// eslint-disable-next-line md-code-utils/utils-uniqueness -- a key walk over one filter, not the matcher
+const namesResolution = (filter: QueryFilter): boolean => {
+	if (isList(filter)) return filter.some(namesResolution);
+	if (!isObj(filter)) return false;
+
+	return Object.keys(filter).some((key) => key === "resolution" || namesResolution(fieldOf(filter, key)));
+};
+
+// The code-role slugs a filter names — `{ codeRole: { theme: … } }` (the keys of
+// the `codeRole` object are slugs) or a `$codeRole.<slug>` reference. These are
+// the roles whose provider literals resolution resolves against.
+// eslint-disable-next-line md-code-utils/utils-uniqueness -- collects slugs, does not parse a where entry
+const codeRoleSlugs = (filter: QueryFilter, out: Set<string>): void => {
+	if (typeof filter === "string") {
+		const match = /\$codeRole\.([\w-]+)/.exec(filter);
+		if (match) out.add(match[1]);
+		return;
+	}
+	if (isList(filter)) {
+		for (const entry of filter) codeRoleSlugs(entry, out);
+		return;
+	}
+	if (!isObj(filter)) return;
+	for (const key of Object.keys(filter)) {
+		const value = fieldOf(filter, key);
+		if (key === "codeRole" && isObj(value)) for (const slug of Object.keys(value)) out.add(slug);
+		else codeRoleSlugs(value, out);
+	}
+};
+
+// The provider role slugs an invariant names (in `when` or any `infer` entry).
+const invariantProviderSlugs = (inv: Invariant): string[] => {
+	const slugs = new Set<string>();
+	if (inv.when != null) codeRoleSlugs(inv.when, slugs);
+	for (const entry of inv.infer) codeRoleSlugs(entry, slugs);
+
+	return [...slugs];
+};
+
+// Every css template the file's candidates carry.
+const templatesOf = (ctx: FileContext): { declarations?: FieldValue }[] => (ctx.facts?.candidates ?? []).flatMap((candidate) => candidate.css?.templates ?? []);
+
+// Materialise `resolution` on the file's css templates for an invariant that
+// reads it. The providers are the literals of the roles the invariant NAMES — a
+// filter that references no role gets no providers (reported as such, never
+// silently resolved against a project-wide scan).
+const materialiseInvariantResolution = (inv: Invariant, ctx: FileContext): void => {
+	if (!(namesResolution(inv.when ?? null) || inv.infer.some(namesResolution))) return;
+	const providers = ctx.providersFor ? ctx.providersFor(invariantProviderSlugs(inv)) : [];
+	for (const template of templatesOf(ctx)) materialiseResolution(template, providers);
+};
+
 // The top-level `report` is the message template for the checks' findings —
 // not a standalone finding of its own. The gates (ignore/where/when) only
 // decide whether the checks run at all. Exception: an invariant with NO
@@ -230,6 +285,9 @@ const checkInvariant = (inv: Invariant, ctx: FileContext, sink: Sink): void => {
 	if (!checkWhere(inv.ignore, ctx.rel, ctx.arch, ctx.facts)) return;
 	if (inv.where.length && checkWhere(inv.where, ctx.rel, ctx.arch, ctx.facts)) return;
 	if (inv.when != null && !matches(ctx.facts ?? {}, inv.when)) return;
+	// Resolution is LAZY: computed only for an invariant that asks about it, and
+	// only against the provider roles that invariant names.
+	materialiseInvariantResolution(inv, ctx);
 	if (!inv.infer.length && inv.report) {
 		sink.out.push(sink.findingFrom({ key: null, report: inv.report }, "invariant", ctx.rel, `root:${inv.id}`, enrichedVars(ctx)));
 	}

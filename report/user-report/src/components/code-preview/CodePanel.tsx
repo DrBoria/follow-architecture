@@ -96,7 +96,7 @@ export const CodePanel = ({ title, code, lang = "typescript", tone, note, max = 
 				    injected as one string, so the rule lives in a <style> the panel
 				    carries with it. */}
 				{matched?.length ? (
-					<style>{`.fa-matched-line{display:inline-block;min-width:100%;background:rgba(110,168,254,0.14);box-shadow:inset 3px 0 0 #6ea8fe;margin:0 -12px;padding:0 12px 0 9px;}`}</style>
+					<style>{`.fa-matched-line{display:inline-block;min-width:100%;background:rgba(110,168,254,0.30);box-shadow:inset 3px 0 0 #6ea8fe;margin:0 -12px;padding:0 12px 0 9px;}`}</style>
 				) : null}
 				<code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
 			</Pre>

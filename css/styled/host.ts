@@ -12,7 +12,7 @@
 // This question is syntax- and framework-agnostic: a template, a class
 // attribute, anything located by a line asks it the same way.
 
-import type { Candidate } from "../entities/facts";
+import type { Candidate } from "../../entities/facts";
 
 const spansLine = (candidate: Candidate, line: number): boolean =>
 	Array.isArray(candidate.lines) && candidate.lines.length > 0 && candidate.lines[0] <= line && line <= candidate.lines[candidate.lines.length - 1];

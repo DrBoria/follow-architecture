@@ -37,6 +37,13 @@ const leftmostOrigin = (expr: Node | null): string | null => {
 	if (!expr) return null;
 	let e: Node | null = expr;
 	while (e) {
+		// A tagged template's VALUE is decided by its tag: `keyframes\`…\`` is an
+		// animation, `styled.div\`…\`` a style block, `css\`…\`` a fragment. The tag
+		// is read through the same walk, so `styled(Image)\`…\`` answers `styled`.
+		if (Node.isTaggedTemplateExpression(e)) {
+			e = e.getTag();
+			continue;
+		}
 		if (Node.isCallExpression(e)) {
 			const callee = e.getExpression();
 			// Pure property path (a.b.c) → the full chain IS the function name.

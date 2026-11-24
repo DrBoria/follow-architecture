@@ -78,7 +78,17 @@ const SFC_RE = /\.(vue|svelte)$/i;
 
 const sourceTextFor = (abs: string, text: string): string => (SFC_RE.test(abs) ? extractScript(text).text : text);
 
-const loadSourceFile = (project: Project, abs: string, text: string): SourceFile => project.createSourceFile(abs, sourceTextFor(abs, text), { overwrite: true });
+// A file already loaded with the SAME text is reused: the pipeline re-reads the
+// linted file on every check, and replacing the source would forget every node
+// other facts (a scope's theme literals) still hold — a value resolver walking
+// a cached literal of that very file would then crash on a removed node.
+const loadSourceFile = (project: Project, abs: string, text: string): SourceFile => {
+	const source = sourceTextFor(abs, text);
+	const existing = project.getSourceFile(abs);
+	if (existing && existing.getFullText() === source) return existing;
+
+	return project.createSourceFile(abs, source, { overwrite: true });
+};
 
 export { createTsProject, loadSourceFile };
 export type { AliasMap };

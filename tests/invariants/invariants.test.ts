@@ -252,3 +252,71 @@ describe("invariants — declared keys", () => {
 		expect(() => normalizeInvariant({ id: "x", rule: [] })).toThrow(/`x\.rule` is not a key/);
 	});
 });
+
+// A `proper-values`-shaped filter matches a resolution fact and the matched
+// item's span reaches the report variables — the generic path the browser
+// highlight is built from. No css-specific code in the engine.
+describe("invariants — resolution facts feed the highlight", () => {
+	it("a rejected reading exposes its span and the offending value", () => {
+		const facts = {
+			codeRole: { theme: [{}] },
+			css: {
+				templates: [
+					{
+						declarations: [
+							{
+								prop: "width",
+								resolution: {
+									resolvedValues: [
+										{ value: "calc(2+)", provider: null, mediaVariant: null, valid: false, problems: [{ kind: "math", span: { start: 0, end: 8 }, detail: null }] },
+									],
+									unresolved: [],
+								},
+							},
+						],
+					},
+				],
+			},
+		};
+		const inv = {
+			id: "proper-values",
+			when: { codeRole: { theme: { length: { gt: 0 } } } },
+			infer: [{ css: { templates: { any: { declarations: { any: { resolution: { resolvedValues: { any: { valid: { equals: false } } } } } } } } } }],
+			report: "`{prop}` is `{value}`",
+		};
+		const out = run(inv, ctxOf("a/x.tsx", facts));
+		expect(out).toHaveLength(1);
+		expect(out[0].vars.highlightText).toBe("calc(2+)");
+		expect(out[0].vars.spanStart).toBe(0);
+		expect(out[0].vars.spanEnd).toBe(8);
+		expect(out[0].vars.highlightKind).toBe("math");
+		expect(out[0].vars.prop).toBe("width");
+	});
+
+	it("an unresolved part matches on its `kind`", () => {
+		const facts = {
+			codeRole: { theme: [{}] },
+			css: {
+				templates: [
+					{
+						declarations: [
+							{
+								prop: "padding",
+								resolution: { resolvedValues: [], unresolved: [{ kind: "undeclared-var", text: "var(--missing)", name: "--missing" }] },
+							},
+						],
+					},
+				],
+			},
+		};
+		const inv = {
+			id: "proper-values",
+			when: { codeRole: { theme: { length: { gt: 0 } } } },
+			infer: [{ css: { templates: { any: { declarations: { any: { resolution: { unresolved: { any: { kind: { not: { equals: "absent" } } } } } } } } } } }],
+			report: "`{prop}` never resolves ({kind})",
+		};
+		const out = run(inv, ctxOf("a/x.tsx", facts));
+		expect(out).toHaveLength(1);
+		expect(out[0].vars.kind).toBe("undeclared-var");
+	});
+});

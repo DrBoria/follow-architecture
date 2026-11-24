@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 import { notice, takeNotices, resetNotices } from "../../report/notices";
 import { renderNotices } from "../../report/cli-report";
-import { documentFacts } from "../../css/document";
+import { documentFacts } from "../../css/styled/document";
 
 // A NOTICE is how the tool tells the reader that an answer is PARTIAL. Every
 // reader that swallows an error states the subject (what it was reading) and the

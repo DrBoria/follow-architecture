@@ -9,7 +9,11 @@
 
 import { admitsWhenNoneReject } from "./gate";
 
+// One refusal, not two: an EMPTY needle has nothing to refuse it, so the gate
+// admits every haystack (no filter). A non-empty needle is refused only when
+// the haystack does not contain it. Spelling the empty case as its own `!n`
+// refusal would invert it — the refusal fires first and the list empties.
 const matchesText = (haystack: string | null | undefined, needle: string): boolean =>
-	admitsWhenNoneReject(needle, [(n) => !n, (n) => !String(haystack ?? "").toLowerCase().includes(n.toLowerCase())]);
+	admitsWhenNoneReject(needle, [(n) => Boolean(n) && !String(haystack ?? "").toLowerCase().includes(n.toLowerCase())]);
 
 export { matchesText };

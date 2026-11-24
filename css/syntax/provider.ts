@@ -15,7 +15,7 @@
 // the engine reads the base, and a rule that knows the syntax reads the rest.
 
 import type { Root } from "postcss";
-import type { DocumentFacts, DocumentOptions } from "../document";
+import type { DocumentFacts, DocumentOptions } from "../styled/document";
 
 interface SyntaxProvider {
 	id: string;

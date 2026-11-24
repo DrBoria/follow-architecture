@@ -36,6 +36,10 @@ const statementExport = (exp: ExportDeclaration, importMap: ReadonlyMap<string, 
 		from: null,
 		source: null,
 		name: null,
+		// `export type { … } from` / `export type * from` erase at compile time
+		// and bind nothing at runtime — a rule that forbids VALUE re-exports must
+		// tell them apart, so record which spelling this is.
+		typeOnly: exp.isTypeOnly(),
 		line: startLine(exp),
 		piece: enclosingPiece(exp),
 	};

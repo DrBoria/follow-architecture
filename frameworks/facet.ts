@@ -18,8 +18,9 @@ import type { Candidate } from "../entities/facts";
 
 // The run context a facet reads. `sf` is the parsed file; `text` is its raw
 // source (a facet that reads markup outside the AST — a Vue `<template>` — needs
-// it); `rel`/`repoRoot` place the file.
-type FacetContext = { rel?: string | null; sf?: SourceFile; text?: string | null; repoRoot?: string | null };
+// it); `rel`/`repoRoot` place the file; `importMap` says which module each local
+// binding was imported from, so a rendered name can resolve across files.
+type FacetContext = { rel?: string | null; sf?: SourceFile; text?: string | null; repoRoot?: string | null; importMap?: ReadonlyMap<string, string> };
 
 interface FrameworkFacet {
 	id: string;

@@ -17,10 +17,10 @@
 // Updating Tailwind is `pnpm update`: new classes appear here by themselves,
 // because nothing in this file enumerates them.
 
-import { classList } from "./class-list";
-import { notice } from "../report/notices";
-import { reasonOf } from "../utils/reason";
-import { partsOf } from "../utils/split";
+import { classList } from "../styled/class-list";
+import { notice } from "../../report/notices";
+import { reasonOf } from "../../utils/reason";
+import { partsOf } from "../../utils/split";
 import { baseConfig, loadSetup, loadGenerate, loadVersion, type TailwindContext } from "./tailwind-engine";
 
 // The loaded engine, or `false` when Tailwind is absent, or `null` before the

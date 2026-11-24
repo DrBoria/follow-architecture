@@ -10,14 +10,14 @@
 // it would invent facts.
 
 import { Node, type SourceFile, type JsxAttribute } from "ts-morph";
-import { SK } from "../entities/ast/tree";
-import { literalTextOf } from "../entities/ast/variables";
-import type { Candidate } from "../entities/facts";
-import { classAttributes } from "../frameworks";
-import { resolveReference } from "../utils/resolve";
-import { dispatchOn } from "../utils/dispatch";
+import { SK } from "../../entities/ast/tree";
+import { literalTextOf } from "../../entities/ast/variables";
+import type { Candidate } from "../../entities/facts";
+import { classAttributes } from "../../frameworks";
+import { resolveReference } from "../../utils/resolve";
+import { dispatchOn } from "../../utils/dispatch";
 import { hostOf } from "./host";
-import { classFacts } from "./tailwind";
+import { classFacts } from "../tailwind/tailwind";
 
 // A class list may be WRITTEN ONCE and named: `const cls = "flex p-4"` then
 // `className={cls}`. That is still a static declaration list — the binding's

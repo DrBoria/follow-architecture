@@ -6,14 +6,16 @@
 // gate (is this CSS at all?) lives with the `css` syntax provider
 // (`syntax/gate`); this only reads what is there.
 
-import { Node, type TaggedTemplateExpression } from "ts-morph";
-import { SK } from "../entities/ast/tree";
-import { climbFrom } from "../entities/ast/climb";
+import { Node, type Expression, type TaggedTemplateExpression } from "ts-morph";
+import { SK } from "../../entities/ast/tree";
+import { climbFrom } from "../../entities/ast/climb";
 
 // One expression a template quotes, with the position its blanks occupy in the
 // substituted text. The link back to TypeScript is a POSITION, not a marker.
 type TemplateExpr = { index: number; text: string; line: number; offset: number };
 type TemplateSource = { text: string; exprs: TemplateExpr[] };
+// The template node itself — either a plain literal or a substitution template.
+type TemplateLiteralNode = ReturnType<TaggedTemplateExpression["getTemplate"]>;
 
 // The template as parseable CSS plus the map back to the expressions it quotes.
 // An expression contributes NOTHING to the CSS text: it is not a value, it is a
@@ -21,8 +23,7 @@ type TemplateSource = { text: string; exprs: TemplateExpr[] };
 // text stays parseable and every declaration's source offsets still point at the
 // place the expression occupies — the link is a position, not a marker and not a
 // guess.
-const templateSource = (node: TaggedTemplateExpression): TemplateSource => {
-	const template = node.getTemplate();
+const templateLiteralSource = (template: TemplateLiteralNode): TemplateSource => {
 	if (Node.isNoSubstitutionTemplateLiteral(template)) return { text: template.getLiteralText(), exprs: [] };
 
 	const head = template.getHead();
@@ -39,6 +40,12 @@ const templateSource = (node: TaggedTemplateExpression): TemplateSource => {
 
 	return { text, exprs };
 };
+
+const templateSource = (node: TaggedTemplateExpression): TemplateSource => templateLiteralSource(node.getTemplate());
+
+// The TypeScript expressions a template quotes, in the SAME order as
+// `TemplateExpr.index` — the resolver's way from a blank back to its question.
+const expressionNodesOf = (template: TemplateLiteralNode): Expression[] => (Node.isNoSubstitutionTemplateLiteral(template) ? [] : template.getTemplateSpans().map((span) => span.getExpression()));
 
 // The comment a declaration is documented by, read from the TypeScript source
 // (above the template, above the `const`) — because a styled template's own
@@ -64,5 +71,5 @@ const leadingCommentOf = (node: TaggedTemplateExpression): { text: string; line:
 	return { text: last.getText().replace(/^\/\*\*?|\*\/$/g, "").trim(), line };
 };
 
-export { templateSource, leadingCommentOf };
-export type { TemplateExpr, TemplateSource };
+export { templateSource, templateLiteralSource, expressionNodesOf, leadingCommentOf };
+export type { TemplateExpr, TemplateSource, TemplateLiteralNode };

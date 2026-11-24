@@ -18,4 +18,13 @@ const groupBy = <Item, Key>(items: readonly Item[], keyOf: (item: Item) => Key):
 	return [...map.entries()];
 };
 
-export { groupBy };
+// Push ONE item into the bucket `key` names, creating the bucket on first use —
+// the in-place counterpart of `groupBy` for a map built across several calls
+// (a provider set, a scope's variables). One spelling of get-or-create.
+const pushGroup = <Key, Item>(map: Map<Key, Item[]>, key: Key, item: Item): void => {
+	const bucket = map.get(key);
+	if (bucket) bucket.push(item);
+	else map.set(key, [item]);
+};
+
+export { groupBy, pushGroup };

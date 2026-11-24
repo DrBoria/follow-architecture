@@ -12,9 +12,9 @@
 import { repair } from "./asks";
 import { substitute, type TemplateVars } from "../utils/template";
 import { isObj, type FieldValue } from "../utils/field";
-import { stringField } from "../utils/read-field";
+import { stringField, numberField } from "../utils/read-field";
 import { resolveReference } from "../utils/resolve";
-import type { FindingItem, FindingFrom } from "../entities/findings";
+import type { FindingItem, FindingFrom, FindingHighlight } from "../entities/findings";
 import type { ReportObject } from "../entities/architecture";
 
 // The fix text a spec states: a bare string, or the structured `{ message }`.
@@ -78,9 +78,21 @@ const dataOf = (item: FindingItem, spec: ReportObject | null, fix: string | null
 	return stated ? { ...(evidence ?? {}), repair: { ...stated, text: fix } } : evidence;
 };
 
+// The span a matched fact named (set by the report-vars walk), so the browser can
+// highlight the exact offending text in the sentence. Absent when none was named.
+const highlightOf = (vars: TemplateVars): FindingHighlight | null => {
+	const text = stringField(vars, "highlightText");
+	const start = numberField(vars, "spanStart", -1);
+	const end = numberField(vars, "spanEnd", -1);
+	if (!text || start < 0 || end < start) return null;
+
+	return { text, start, end, kind: stringField(vars, "highlightKind") || "problem" };
+};
+
 const findingFrom: FindingFrom = (...args) => {
 	const [item, rule, node, key, vars] = args;
 	const { message, fix, place, spec } = sentencesOf(item, vars);
+	const highlight = highlightOf(vars);
 	return {
 		file: stringField(vars, "path") || node,
 		node,
@@ -92,6 +104,7 @@ const findingFrom: FindingFrom = (...args) => {
 		message,
 		fix,
 		pos: { line: item.line ?? 1, column: 1 },
+		...(highlight ? { highlight } : {}),
 	};
 };
 
